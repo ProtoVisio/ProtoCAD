@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:freecad="https://www.freecad.org/wiki/index.php?title=Svg_Namespace" width="297.0mm" height="420.0mm" viewBox="0 0 297.0 420.0" version="1.1">
+<rect x="0" y="0" width="297.0" height="420.0" fill="#ffffff" stroke="none"/>
+<rect x="20.00" y="5.00" width="272.00" height="410.00" fill="none" stroke="#000000" stroke-width="1.0"/>
+<rect x="107.00" y="360.00" width="185.00" height="55.00" fill="none" stroke="#000000" stroke-width="1.0"/>
+<line x1="172.00" y1="360.00" x2="172.00" y2="415.00" stroke="#000000" stroke-width="1.0"/>
+<line x1="107.00" y1="410.00" x2="172.00" y2="410.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="405.00" x2="172.00" y2="405.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="400.00" x2="172.00" y2="400.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="395.00" x2="172.00" y2="395.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="390.00" x2="172.00" y2="390.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="385.00" x2="172.00" y2="385.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="380.00" x2="172.00" y2="380.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="375.00" x2="172.00" y2="375.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="370.00" x2="172.00" y2="370.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="107.00" y1="365.00" x2="172.00" y2="365.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="114.00" y1="365.00" x2="114.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="124.00" y1="365.00" x2="124.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="147.00" y1="365.00" x2="147.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="162.00" y1="365.00" x2="162.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="172.00" y1="375.00" x2="292.00" y2="375.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="172.00" y1="390.00" x2="292.00" y2="390.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="172.00" y1="405.00" x2="292.00" y2="405.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="227.00" y1="390.00" x2="227.00" y2="405.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="247.00" y1="390.00" x2="247.00" y2="405.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="267.00" y1="390.00" x2="267.00" y2="405.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="227.00" y1="405.00" x2="227.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<line x1="252.00" y1="405.00" x2="252.00" y2="415.00" stroke="#000000" stroke-width="0.35"/>
+<text x="229.00" y="392.50" font-family="osifont" font-size="2.0" fill="#000000">Лит.</text>
+<text x="248.50" y="392.50" font-family="osifont" font-size="2.0" fill="#000000">Масса</text>
+<text x="268.00" y="392.50" font-family="osifont" font-size="2.0" fill="#000000">Масштаб</text>
+<text x="229.00" y="407.50" font-family="osifont" font-size="2.0" fill="#000000">Лист</text>
+<text x="254.00" y="407.50" font-family="osifont" font-size="2.0" fill="#000000">Листов</text>
+<text x="107.50" y="373.50" font-family="osifont" font-size="2.0" fill="#000000">Разраб.</text>
+<text id="proto_Author" x="125.00" y="373.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="Author"><tspan id="tspan_Author" x="125.00" y="373.50"></tspan></text>
+<text id="proto_AuthorDate" x="148.00" y="373.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="AuthorDate"><tspan id="tspan_AuthorDate" x="148.00" y="373.50"></tspan></text>
+<text x="107.50" y="378.50" font-family="osifont" font-size="2.0" fill="#000000">Пров.</text>
+<text id="proto_Checker" x="125.00" y="378.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="Checker"><tspan id="tspan_Checker" x="125.00" y="378.50"></tspan></text>
+<text id="proto_CheckerDate" x="148.00" y="378.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="CheckerDate"><tspan id="tspan_CheckerDate" x="148.00" y="378.50"></tspan></text>
+<text x="107.50" y="383.50" font-family="osifont" font-size="2.0" fill="#000000">Т.контр.</text>
+<text id="proto_TechController" x="125.00" y="383.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="TechController"><tspan id="tspan_TechController" x="125.00" y="383.50"></tspan></text>
+<text id="proto_TechControllerDate" x="148.00" y="383.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="TechControllerDate"><tspan id="tspan_TechControllerDate" x="148.00" y="383.50"></tspan></text>
+<text x="107.50" y="393.50" font-family="osifont" font-size="2.0" fill="#000000">Н.контр.</text>
+<text id="proto_Normcontrol" x="125.00" y="393.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="Normcontrol"><tspan id="tspan_Normcontrol" x="125.00" y="393.50"></tspan></text>
+<text id="proto_NormcontrolDate" x="148.00" y="393.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="NormcontrolDate"><tspan id="tspan_NormcontrolDate" x="148.00" y="393.50"></tspan></text>
+<text x="107.50" y="398.50" font-family="osifont" font-size="2.0" fill="#000000">Утв.</text>
+<text id="proto_Approver" x="125.00" y="398.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="Approver"><tspan id="tspan_Approver" x="125.00" y="398.50"></tspan></text>
+<text id="proto_ApproverDate" x="148.00" y="398.50" font-family="osifont" font-size="2.5" fill="#000000" freecad:editable="ApproverDate"><tspan id="tspan_ApproverDate" x="148.00" y="398.50"></tspan></text>
+<text id="proto_Designation" x="177.00" y="385.00" font-family="osifont" font-size="5.0" fill="#000000" freecad:editable="Designation"><tspan id="tspan_Designation" x="177.00" y="385.00">АБВГ.XXXXXX.XXX</tspan></text>
+<text id="proto_Title" x="177.00" y="400.00" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Title"><tspan id="tspan_Title" x="177.00" y="400.00">Наименование</tspan></text>
+<text id="proto_Litera" x="235.00" y="400.00" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Litera"><tspan id="tspan_Litera" x="235.00" y="400.00"></tspan></text>
+<text id="proto_Mass" x="253.00" y="400.00" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Mass"><tspan id="tspan_Mass" x="253.00" y="400.00"></tspan></text>
+<text id="proto_Scale" x="272.00" y="400.00" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Scale"><tspan id="tspan_Scale" x="272.00" y="400.00">1:1</tspan></text>
+<text id="proto_Sheet" x="240.00" y="412.50" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Sheet"><tspan id="tspan_Sheet" x="240.00" y="412.50">1</tspan></text>
+<text id="proto_Sheets" x="267.00" y="412.50" font-family="osifont" font-size="3.5" fill="#000000" freecad:editable="Sheets"><tspan id="tspan_Sheets" x="267.00" y="412.50">1</tspan></text>
+</svg>

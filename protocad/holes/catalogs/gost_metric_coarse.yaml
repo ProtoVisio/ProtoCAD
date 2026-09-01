@@ -1,0 +1,611 @@
+catalog_id: gost.metric.coarse
+display_name: Метрическая резьба с крупным шагом
+standard:
+  document: ГОСТ 24705-2004
+  edition: 2004
+  profile: ГОСТ 9150
+  diameters_and_pitches: ГОСТ 8724-2002
+  tolerances: ГОСТ 16093-2004
+  source_revision: ProtoCAD HoleCatalog P01
+  data_class: NORMATIVE_DERIVED
+  formulas:
+    pitch_diameter_mm: D - 0.6495 * P
+    minor_diameter_mm: D - 1.0825 * P
+    root_diameter_mm: d - 1.2267 * P
+data_revision: 1
+internal_thread:
+  degrees:
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+  deviations:
+    - E
+    - F
+    - G
+    - H
+  tolerance_classes:
+    - 4E
+    - 4F
+    - 4G
+    - 4H
+    - 5E
+    - 5F
+    - 5G
+    - 5H
+    - 6E
+    - 6F
+    - 6G
+    - 6H
+    - 7E
+    - 7F
+    - 7G
+    - 7H
+    - 8E
+    - 8F
+    - 8G
+    - 8H
+  prepared_bore_source: null
+sizes:
+  - designation: M0,25
+    nominal_major_diameter_mm: 0.25
+    series: 1
+    pitches:
+      - value_mm: 0.075
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.201
+          minor_diameter_mm: 0.169
+          root_diameter_mm: 0.158
+  - designation: M0,3
+    nominal_major_diameter_mm: 0.3
+    series: 1
+    pitches:
+      - value_mm: 0.08
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.248
+          minor_diameter_mm: 0.213
+          root_diameter_mm: 0.202
+  - designation: M0,35
+    nominal_major_diameter_mm: 0.35
+    series: 2
+    pitches:
+      - value_mm: 0.09
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.292
+          minor_diameter_mm: 0.253
+          root_diameter_mm: 0.24
+  - designation: M0,4
+    nominal_major_diameter_mm: 0.4
+    series: 1
+    pitches:
+      - value_mm: 0.1
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.335
+          minor_diameter_mm: 0.292
+          root_diameter_mm: 0.277
+  - designation: M0,45
+    nominal_major_diameter_mm: 0.45
+    series: 2
+    pitches:
+      - value_mm: 0.1
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.385
+          minor_diameter_mm: 0.342
+          root_diameter_mm: 0.327
+  - designation: M0,5
+    nominal_major_diameter_mm: 0.5
+    series: 1
+    pitches:
+      - value_mm: 0.125
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.419
+          minor_diameter_mm: 0.365
+          root_diameter_mm: 0.347
+  - designation: M0,55
+    nominal_major_diameter_mm: 0.55
+    series: 2
+    pitches:
+      - value_mm: 0.125
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.469
+          minor_diameter_mm: 0.415
+          root_diameter_mm: 0.397
+  - designation: M0,6
+    nominal_major_diameter_mm: 0.6
+    series: 1
+    pitches:
+      - value_mm: 0.15
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.503
+          minor_diameter_mm: 0.438
+          root_diameter_mm: 0.416
+  - designation: M0,7
+    nominal_major_diameter_mm: 0.7
+    series: 2
+    pitches:
+      - value_mm: 0.175
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.586
+          minor_diameter_mm: 0.511
+          root_diameter_mm: 0.485
+  - designation: M0,8
+    nominal_major_diameter_mm: 0.8
+    series: 1
+    pitches:
+      - value_mm: 0.2
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.67
+          minor_diameter_mm: 0.584
+          root_diameter_mm: 0.555
+  - designation: M0,9
+    nominal_major_diameter_mm: 0.9
+    series: 2
+    pitches:
+      - value_mm: 0.225
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.754
+          minor_diameter_mm: 0.656
+          root_diameter_mm: 0.624
+  - designation: M1
+    nominal_major_diameter_mm: 1
+    series: 1
+    pitches:
+      - value_mm: 0.25
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 0.838
+          minor_diameter_mm: 0.729
+          root_diameter_mm: 0.693
+  - designation: M1,1
+    nominal_major_diameter_mm: 1.1
+    series: 2
+    pitches:
+      - value_mm: 0.25
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 0.938
+          minor_diameter_mm: 0.829
+          root_diameter_mm: 0.793
+  - designation: M1,2
+    nominal_major_diameter_mm: 1.2
+    series: 1
+    pitches:
+      - value_mm: 0.25
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 1.038
+          minor_diameter_mm: 0.929
+          root_diameter_mm: 0.893
+  - designation: M1,4
+    nominal_major_diameter_mm: 1.4
+    series: 2
+    pitches:
+      - value_mm: 0.3
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 1.205
+          minor_diameter_mm: 1.075
+          root_diameter_mm: 1.032
+  - designation: M1,6
+    nominal_major_diameter_mm: 1.6
+    series: 1
+    pitches:
+      - value_mm: 0.35
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 1.373
+          minor_diameter_mm: 1.221
+          root_diameter_mm: 1.171
+  - designation: M1,8
+    nominal_major_diameter_mm: 1.8
+    series: 2
+    pitches:
+      - value_mm: 0.35
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 1.573
+          minor_diameter_mm: 1.421
+          root_diameter_mm: 1.371
+  - designation: M2
+    nominal_major_diameter_mm: 2
+    series: 1
+    pitches:
+      - value_mm: 0.4
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 1.74
+          minor_diameter_mm: 1.567
+          root_diameter_mm: 1.509
+  - designation: M2,2
+    nominal_major_diameter_mm: 2.2
+    series: 2
+    pitches:
+      - value_mm: 0.45
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 1.908
+          minor_diameter_mm: 1.713
+          root_diameter_mm: 1.648
+  - designation: M2,5
+    nominal_major_diameter_mm: 2.5
+    series: 1
+    pitches:
+      - value_mm: 0.45
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 2.208
+          minor_diameter_mm: 2.013
+          root_diameter_mm: 1.948
+  - designation: M3
+    nominal_major_diameter_mm: 3
+    series: 1
+    pitches:
+      - value_mm: 0.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 2.675
+          minor_diameter_mm: 2.459
+          root_diameter_mm: 2.387
+  - designation: M3,5
+    nominal_major_diameter_mm: 3.5
+    series: 2
+    pitches:
+      - value_mm: 0.6
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 3.11
+          minor_diameter_mm: 2.851
+          root_diameter_mm: 2.764
+  - designation: M4
+    nominal_major_diameter_mm: 4
+    series: 1
+    pitches:
+      - value_mm: 0.7
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 3.545
+          minor_diameter_mm: 3.242
+          root_diameter_mm: 3.141
+  - designation: M4,5
+    nominal_major_diameter_mm: 4.5
+    series: 2
+    pitches:
+      - value_mm: 0.75
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 4.013
+          minor_diameter_mm: 3.688
+          root_diameter_mm: 3.58
+  - designation: M5
+    nominal_major_diameter_mm: 5
+    series: 1
+    pitches:
+      - value_mm: 0.8
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 4.48
+          minor_diameter_mm: 4.134
+          root_diameter_mm: 4.019
+  - designation: M6
+    nominal_major_diameter_mm: 6
+    series: 1
+    pitches:
+      - value_mm: 1
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 5.351
+          minor_diameter_mm: 4.918
+          root_diameter_mm: 4.773
+  - designation: M7
+    nominal_major_diameter_mm: 7
+    series: 2
+    pitches:
+      - value_mm: 1
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 6.351
+          minor_diameter_mm: 5.918
+          root_diameter_mm: 5.773
+  - designation: M8
+    nominal_major_diameter_mm: 8
+    series: 1
+    pitches:
+      - value_mm: 1.25
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 7.188
+          minor_diameter_mm: 6.647
+          root_diameter_mm: 6.467
+  - designation: M9
+    nominal_major_diameter_mm: 9
+    series: 3
+    pitches:
+      - value_mm: 1.25
+        preferred: true
+        series: 3
+        basic_dimensions:
+          pitch_diameter_mm: 8.188
+          minor_diameter_mm: 7.647
+          root_diameter_mm: 7.467
+  - designation: M10
+    nominal_major_diameter_mm: 10
+    series: 1
+    pitches:
+      - value_mm: 1.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 9.026
+          minor_diameter_mm: 8.376
+          root_diameter_mm: 8.16
+  - designation: M11
+    nominal_major_diameter_mm: 11
+    series: 3
+    pitches:
+      - value_mm: 1.5
+        preferred: true
+        series: 3
+        basic_dimensions:
+          pitch_diameter_mm: 10.026
+          minor_diameter_mm: 9.376
+          root_diameter_mm: 9.16
+  - designation: M12
+    nominal_major_diameter_mm: 12
+    series: 1
+    pitches:
+      - value_mm: 1.75
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 10.863
+          minor_diameter_mm: 10.106
+          root_diameter_mm: 9.853
+  - designation: M14
+    nominal_major_diameter_mm: 14
+    series: 2
+    pitches:
+      - value_mm: 2
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 12.701
+          minor_diameter_mm: 11.835
+          root_diameter_mm: 11.547
+  - designation: M16
+    nominal_major_diameter_mm: 16
+    series: 1
+    pitches:
+      - value_mm: 2
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 14.701
+          minor_diameter_mm: 13.835
+          root_diameter_mm: 13.547
+  - designation: M18
+    nominal_major_diameter_mm: 18
+    series: 2
+    pitches:
+      - value_mm: 2.5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 16.376
+          minor_diameter_mm: 15.294
+          root_diameter_mm: 14.933
+  - designation: M20
+    nominal_major_diameter_mm: 20
+    series: 1
+    pitches:
+      - value_mm: 2.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 18.376
+          minor_diameter_mm: 17.294
+          root_diameter_mm: 16.933
+  - designation: M22
+    nominal_major_diameter_mm: 22
+    series: 2
+    pitches:
+      - value_mm: 2.5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 20.376
+          minor_diameter_mm: 19.294
+          root_diameter_mm: 18.933
+  - designation: M24
+    nominal_major_diameter_mm: 24
+    series: 1
+    pitches:
+      - value_mm: 3
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 22.052
+          minor_diameter_mm: 20.753
+          root_diameter_mm: 20.32
+  - designation: M27
+    nominal_major_diameter_mm: 27
+    series: 2
+    pitches:
+      - value_mm: 3
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 25.052
+          minor_diameter_mm: 23.753
+          root_diameter_mm: 23.32
+  - designation: M30
+    nominal_major_diameter_mm: 30
+    series: 1
+    pitches:
+      - value_mm: 3.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 27.727
+          minor_diameter_mm: 26.211
+          root_diameter_mm: 25.707
+  - designation: M33
+    nominal_major_diameter_mm: 33
+    series: 2
+    pitches:
+      - value_mm: 3.5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 30.727
+          minor_diameter_mm: 29.211
+          root_diameter_mm: 28.707
+  - designation: M36
+    nominal_major_diameter_mm: 36
+    series: 1
+    pitches:
+      - value_mm: 4
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 33.402
+          minor_diameter_mm: 31.67
+          root_diameter_mm: 31.093
+  - designation: M39
+    nominal_major_diameter_mm: 39
+    series: 2
+    pitches:
+      - value_mm: 4
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 36.402
+          minor_diameter_mm: 34.67
+          root_diameter_mm: 34.093
+  - designation: M42
+    nominal_major_diameter_mm: 42
+    series: 1
+    pitches:
+      - value_mm: 4.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 39.077
+          minor_diameter_mm: 37.129
+          root_diameter_mm: 36.48
+  - designation: M45
+    nominal_major_diameter_mm: 45
+    series: 2
+    pitches:
+      - value_mm: 4.5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 42.077
+          minor_diameter_mm: 40.129
+          root_diameter_mm: 39.48
+  - designation: M48
+    nominal_major_diameter_mm: 48
+    series: 1
+    pitches:
+      - value_mm: 5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 44.753
+          minor_diameter_mm: 42.588
+          root_diameter_mm: 41.867
+  - designation: M52
+    nominal_major_diameter_mm: 52
+    series: 2
+    pitches:
+      - value_mm: 5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 48.753
+          minor_diameter_mm: 46.588
+          root_diameter_mm: 45.867
+  - designation: M56
+    nominal_major_diameter_mm: 56
+    series: 1
+    pitches:
+      - value_mm: 5.5
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 52.428
+          minor_diameter_mm: 50.046
+          root_diameter_mm: 49.253
+  - designation: M60
+    nominal_major_diameter_mm: 60
+    series: 2
+    pitches:
+      - value_mm: 5.5
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 56.428
+          minor_diameter_mm: 54.046
+          root_diameter_mm: 53.253
+  - designation: M64
+    nominal_major_diameter_mm: 64
+    series: 1
+    pitches:
+      - value_mm: 6
+        preferred: true
+        series: 1
+        basic_dimensions:
+          pitch_diameter_mm: 60.103
+          minor_diameter_mm: 57.505
+          root_diameter_mm: 56.64
+  - designation: M68
+    nominal_major_diameter_mm: 68
+    series: 2
+    pitches:
+      - value_mm: 6
+        preferred: true
+        series: 2
+        basic_dimensions:
+          pitch_diameter_mm: 64.103
+          minor_diameter_mm: 61.505
+          root_diameter_mm: 60.64

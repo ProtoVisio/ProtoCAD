@@ -1,0 +1,10 @@
+schema_version: 1
+families:
+  - catalog_id: gost.metric.coarse
+    display_name: Метрическая резьба с крупным шагом
+    file: gost_metric_coarse.yaml
+    sizes: 51
+  - catalog_id: gost.metric.fine
+    display_name: Метрическая резьба с мелким шагом
+    file: gost_metric_fine.yaml
+    sizes: 136
