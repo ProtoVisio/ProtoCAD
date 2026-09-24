@@ -4,7 +4,6 @@
 там живут внутренние проверки, включая карантин GPL (THIRD_PARTY.md).
 """
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -15,12 +14,6 @@ sys.path.insert(0, str(ROOT))
 
 from protocad import kernel  # noqa: E402
 from protocad.prep import Study  # noqa: E402
-from protocad.prep.mesh import find_python  # noqa: E402
-
-needs_gmsh = pytest.mark.skipif(find_python()[0] is None,
-                                reason="gmsh не найден (requirements-mesh.txt)")
-needs_ccx = pytest.mark.skipif(shutil.which("ccx") is None,
-                               reason="CalculiX (ccx) не установлен")
 
 
 def study_of(*named_shapes, name="проба"):

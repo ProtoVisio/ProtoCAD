@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -372,10 +371,6 @@ def defeature(study, holes: float = 0.0, fillets: float = 0.0,
         bodies_now.append(Body(body.name, shape))
         images.append(image)
     study.replace(bodies_now, combined(*images), report)
-    if study.glued and images:
-        study.glued = False
-        report.note("UNGLUED", "склейка тел снята упрощением — склейте заново",
-                    WARNING)
     kinds = {}
     for item in features:
         kinds[item.kind] = kinds.get(item.kind, 0) + 1

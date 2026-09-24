@@ -58,7 +58,6 @@ def heal(study, tolerance: float = 0.0, sew: bool = True, fix: bool = True,
     if unify:
         stages.append(("слияние граней", _unify))
 
-    was_glued = study.glued
     for title, stage in stages:
         bodies, images = [], []
         for body in study.bodies:
@@ -86,11 +85,6 @@ def heal(study, tolerance: float = 0.0, sew: bool = True, fix: bool = True,
             bodies.append(Body(body.name, shape))
             images.append(image)
         study.replace(bodies, combined(*images), report)
-    if was_glued:
-        # Лечили по телам — общие грани стали у каждого своими.
-        study.glued = False
-        report.note("UNGLUED", "склейка тел снята лечением — склейте заново "
-                    "перед построением сетки", WARNING)
     report.after = study.summary()
     before, after = report.before, report.after
     report.message = (f"граней {before['faces']} → {after['faces']}, "

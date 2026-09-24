@@ -85,10 +85,8 @@ def _convert(args) -> int:
         io.write_step(study, target)
     elif suffix in io.BREP_EXTENSIONS:
         io.write_brep(study, target)
-    elif suffix == ".stl":
-        io.write_stl(study, target, scale=args.scale)
     else:
-        print(f"пишем STEP, BREP или STL, а не {suffix}", file=sys.stderr)
+        print(f"пишем STEP или BREP, а не {suffix}", file=sys.stderr)
         return 2
     print(f"записано: {target}")
     return 0
@@ -142,8 +140,6 @@ def main(argv=None) -> int:
     convert = commands.add_parser("convert", parents=[common], help="перевести формат")
     convert.add_argument("source")
     convert.add_argument("target")
-    convert.add_argument("--scale", type=float, default=1.0,
-                         help="множитель координат для STL")
     convert.set_defaults(handler=_convert)
 
     run = commands.add_parser("run", parents=[common], help="прогнать рецепт")

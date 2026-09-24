@@ -1,4 +1,4 @@
-"""Окно подготовки к расчёту.
+"""Окно подготовки геометрии к расчёту.
 
 Всё, что окно делает с моделью, — вызовы `protocad.prep`, те же, что у
 рецепта и командной строки. Своей геометрии у окна нет: оно показывает
@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -37,25 +36,6 @@ def _swatch(colour) -> QtGui.QIcon:
     return QtGui.QIcon(pixmap)
 
 
-class _MeshWorker(QtCore.QThread):
-    """Сетка в фоне: построитель работает минуты, окно не должно замирать."""
-
-    done = QtCore.Signal(object)
-
-    def __init__(self, study, spec, outputs, scale):
-        super().__init__()
-        self.arguments = (study, spec, outputs, scale)
-
-    def run(self) -> None:
-        study, spec, outputs, scale = self.arguments
-        try:
-            report = prep.mesh(study, spec, outputs, scale=scale, preview=True)
-        except Exception as failure:  # noqa: BLE001 — показать, а не уронить окно
-            report = prep.Report("mesh")
-            report.fail("MESH_CRASHED", f"{type(failure).__name__}: {failure}")
-        self.done.emit(report)
-
-
 class PrepWindow(QtWidgets.QMainWindow):
     """Подготовка геометрии к расчёту."""
 
@@ -66,11 +46,6 @@ class PrepWindow(QtWidgets.QMainWindow):
         self.selected: set = set()
         self.problem_faces: set = set()
         self.undo_stack: list = []
-        self.local_sizes: dict = {}
-        self.worker = None
-        #: Треугольники последней сетки. Сбрасываются любой правкой модели:
-        #: сетка от прежней геометрии — неправда о нынешней.
-        self.mesh_triangles = None
         self.resize(1500, 920)
 
         self.viewport = Viewport()
@@ -111,10 +86,7 @@ class PrepWindow(QtWidgets.QMainWindow):
         bar.setMovable(False)
         self.needs_model = []
 
-        self.needs_idle = []
-
-        def action(title, handler, tip="", shortcut=None, model=True, menu=None,
-                   idle=True):
+        def action(title, handler, tip="", shortcut=None, model=True, menu=None):
             item = QtGui.QAction(title, self)
             item.setToolTip(tip or title)
             item.setStatusTip(tip)
@@ -123,10 +95,6 @@ class PrepWindow(QtWidgets.QMainWindow):
             item.triggered.connect(handler)
             if model:
                 self.needs_model.append(item)
-            elif idle:
-                # Пока строится сетка, модель подменять нельзя: построитель
-                # работает с ней в фоне, и итог лёг бы на чужую модель.
-                self.needs_idle.append(item)
             (menu or bar).addAction(item)
             return item
 
@@ -135,13 +103,13 @@ class PrepWindow(QtWidgets.QMainWindow):
                QtGui.QKeySequence.Open, model=False, menu=files)
         action("Образец: кронштейн", self._demo, model=False, menu=files)
         files.addSeparator()
-        action("Сохранить геометрию…", self._export, "STEP с именами тел, BREP или STL",
+        action("Сохранить геометрию…", self._export, "STEP с именами тел или BREP",
                menu=files)
         action("Сохранить рецепт…", self._save_recipe,
                "шаги этой подготовки — чтобы повторить на новой версии", menu=files)
         action("Прогнать рецепт…", self._run_recipe, model=False, menu=files)
         files.addSeparator()
-        action("Закрыть", self.close, model=False, menu=files, idle=False)
+        action("Закрыть", self.close, model=False, menu=files)
 
         edit = self.menuBar().addMenu("Правка")
         self.undo_action = action("Отменить", self._undo, "вернуть модель до шага",
@@ -151,31 +119,20 @@ class PrepWindow(QtWidgets.QMainWindow):
         action("Открыть", self._open, "STEP, IGES, BREP или сборка ProtoCAD",
                model=False)
         bar.addSeparator()
-        action("Проверить", self._check, "найти то, на чём споткнётся сетка", "F5")
+        action("Проверить", self._check,
+               "найти то, на чём споткнётся расчётная система", "F5")
         action("Исправить", self._heal, "сшить, починить, слить лишние грани")
         action("Упростить", self._defeature, "убрать мелкие отверстия и скругления")
         bar.addSeparator()
-        action("Симметрия", self._cut, "оставить половину модели")
-        action("Разделить", self._split, "разрезать тело на склеенные части")
-        action("Склеить", self._glue, "сделать общие грани стыков")
-        action("Область течения", self._enclosure, "воздух вокруг модели для CFD")
-        bar.addSeparator()
         action("Группа граней", self._group_faces,
-               "выбранные грани — в группу (граничное условие)", "Ctrl+G")
+               "выбранные грани — в именованную группу", "Ctrl+G")
         action("Материал", self._group_bodies,
                "тела выбранных граней — в группу тел")
-        bar.addSeparator()
-        action("Сетка", self._mesh, "построить сетку и записать файл решателя",
-               "Ctrl+M")
         bar.addSeparator()
         action("Отменить", self._undo, "вернуть модель до шага")
 
         view = self.menuBar().addMenu("Вид")
         action("Вписать", self.viewport.fit_view, "", "F", menu=view)
-        self.mesh_action = QtGui.QAction("Показывать сетку", self, checkable=True)
-        self.mesh_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+M"))
-        self.mesh_action.toggled.connect(lambda _on: self._refresh())
-        view.addAction(self.mesh_action)
         edges = QtGui.QAction("Рёбра", self, checkable=True, checked=True)
         edges.toggled.connect(self._toggle_edges)
         view.addAction(edges)
@@ -185,15 +142,9 @@ class PrepWindow(QtWidgets.QMainWindow):
         self.viewport.update()
 
     def _enable(self) -> None:
-        busy = self.worker is not None
         for item in self.needs_model:
-            item.setEnabled(self.study is not None and not busy)
-        for item in self.needs_idle:
-            item.setEnabled(not busy)
-        self.undo_action.setEnabled(bool(self.undo_stack) and not busy)
-        # Показ сетки перестраивает сцену, а это чтение той же геометрии,
-        # которую в фоне пишет построитель.
-        self.mesh_action.setEnabled(self.mesh_triangles is not None and not busy)
+            item.setEnabled(self.study is not None)
+        self.undo_action.setEnabled(bool(self.undo_stack))
 
     # --- исследование -----------------------------------------------------
 
@@ -203,9 +154,8 @@ class PrepWindow(QtWidgets.QMainWindow):
             self.undo_stack = []
         self.selected = set()
         self.problem_faces = set()
-        self._forget_mesh()
         self._refresh(fit=True)
-        title = f"ProtoCAD — подготовка к расчёту"
+        title = "ProtoCAD — подготовка к расчёту"
         if study is not None:
             title += f" — {study.name}"
         self.setWindowTitle(title)
@@ -275,26 +225,17 @@ class PrepWindow(QtWidgets.QMainWindow):
             # подсветил бы и отдал в следующую команду случайные грани.
             self.selected = set()
             self.problem_faces = set()
-        if reshaped:
-            self._forget_mesh()
         self._show_report(report)
         # Разбивка на треугольники — самое долгое в показе, и после шагов,
         # не менявших геометрию, она не нужна: хватает перекраски.
         self._refresh(rebuild=reshaped)
         return report
 
-    def _forget_mesh(self) -> None:
-        self.mesh_triangles = None
-        self.mesh_action.blockSignals(True)
-        self.mesh_action.setChecked(False)
-        self.mesh_action.blockSignals(False)
-
     def _undo(self) -> None:
         if not self.undo_stack:
             return
         self.study.restore(self.undo_stack.pop())
         self.selected = set()
-        self._forget_mesh()
         self._refresh()
         self._say("Отменено: модель как до последнего шага.")
 
@@ -321,46 +262,6 @@ class PrepWindow(QtWidgets.QMainWindow):
         self.selected = set()
         self._paint()
 
-    def _plane_of_selection(self):
-        """Плоскость выбранной плоской грани — чтобы не вводить числа."""
-        if len(self.selected) != 1:
-            return None
-        data = prep.describe(self.study.face(next(iter(self.selected))))
-        if data["type"] != "plane":
-            return None
-        return data["center"], data["normal"]
-
-    def _cut(self) -> None:
-        plane = self._plane_of_selection()
-        centre = self.study.bounds().center
-        origin, normal = plane if plane else (centre, (1.0, 0.0, 0.0))
-        dialog = dialogs.PlaneDialog(
-            "Симметрия", "Оставить часть модели по одну сторону плоскости. "
-            "Выбранная плоская грань задаёт плоскость сама.",
-            origin, normal, keep=True, group="symmetry", parent=self)
-        if dialog.exec():
-            self._step(prep.cut_by_plane, **dialog.values())
-
-    def _split(self) -> None:
-        plane = self._plane_of_selection()
-        centre = self.study.bounds().center
-        origin, normal = plane if plane else (centre, (1.0, 0.0, 0.0))
-        dialog = dialogs.PlaneDialog(
-            "Разделить", "Разрезать тела на части, склеенные по разрезу: сетка "
-            "по обе стороны совпадёт.", origin, normal, keep=False, group="",
-            parent=self)
-        if dialog.exec():
-            self._step(prep.split_by_plane, **dialog.values())
-
-    def _glue(self) -> None:
-        self._step(prep.glue)
-
-    def _enclosure(self) -> None:
-        size = max(self.study.bounds().size)
-        dialog = dialogs.EnclosureDialog(size, self)
-        if dialog.exec():
-            self._step(prep.enclosure, **dialog.values())
-
     def _group_faces(self) -> None:
         if not self.selected:
             self._say("Сначала выберите грани: щелчок — грань, Ctrl+щелчок — "
@@ -369,8 +270,9 @@ class PrepWindow(QtWidgets.QMainWindow):
         names = [name for name, group in self.study.groups.items()
                  if group.kind == FACE_GROUP]
         dialog = dialogs.GroupDialog(
-            "Группа граней", f"Выбрано граней: {len(self.selected)}. Группа — это "
-            f"граничное условие: закрепление, давление, вход потока.", names, self)
+            "Группа граней", f"Выбрано граней: {len(self.selected)}. Группа — "
+            f"именованный набор граней: крепление, источник тепла, место контакта.",
+            names, self)
         if not dialog.exec():
             return
         values = dialog.values()
@@ -387,65 +289,18 @@ class PrepWindow(QtWidgets.QMainWindow):
                  if group.kind == BODY_GROUP]
         dialog = dialogs.GroupDialog(
             "Материал", "Тела: " + ", ".join(owners) + ". Группа тел — это "
-            "материал: в файле решателя она станет набором элементов.", names, self)
+            "материал: по ней свойства назначаются всем телам разом.", names, self)
         if dialog.exec():
             values = dialog.values()
             self._step(prep.make_group, values["name"], kind=BODY_GROUP,
                        bodies=owners, add=values["add"])
-
-    def _mesh(self) -> None:
-        if self.worker is not None:
-            return
-        python, reason = prep.find_python()
-        if python is None:
-            QtWidgets.QMessageBox.warning(self, "Сетка", reason)
-            return
-        faces = [name for name, group in self.study.groups.items()
-                 if group.kind == FACE_GROUP]
-        dialog = dialogs.MeshDialog(
-            self.study.diagonal() / 20.0, faces, self.local_sizes, self.study.glued,
-            len(self.study.bodies), self.folder, _file_stem(self.study.name), self)
-        if not dialog.exec():
-            return
-        values = dialog.values()
-        self.local_sizes.update(values["local"])
-        spec = prep.MeshSpec(size=values["size"], order=values["order"],
-                             algorithm=values["algorithm"],
-                             curvature=values["curvature"], local=values["local"])
-        self.worker = _MeshWorker(self.study, spec, values["outputs"], values["scale"])
-        self.worker.done.connect(self._meshed)
-        self._enable()
-        self.statusBar().showMessage("Строю сетку… окно можно вертеть")
-        self.worker.start()
-
-    def _meshed(self, report) -> None:
-        worker, self.worker = self.worker, None
-        worker.wait()
-        if worker.arguments[0] is not self.study:
-            self._enable()
-            return
-        self.statusBar().clearMessage()
-        self._show_report(report)
-        stats = report.after.get("stats") if report.ok else None
-        if stats:
-            lines = [f"узлов: {stats['nodes']}"]
-            lines += [f"{kind}: {count}" for kind, count in stats["elements"].items()]
-            lines += [f"группа {name}: {count} эл." for name, count in stats["groups"].items()]
-            lines += [f"записано: {path}" for path in report.after.get("files", ())]
-            self.output.appendPlainText("\n".join(lines))
-        if report.preview is not None:
-            self.mesh_triangles = report.preview["triangles"]
-            self.mesh_action.blockSignals(True)
-            self.mesh_action.setChecked(True)
-            self.mesh_action.blockSignals(False)
-        self._refresh()
 
     # --- файлы ------------------------------------------------------------
 
     def _export(self) -> None:
         name, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Сохранить геометрию", str(Path(self.folder) / f"{_file_stem(self.study.name)}.step"),
-            "STEP (*.step);;BREP (*.brep);;STL (*.stl)")
+            "STEP (*.step);;BREP (*.brep)")
         if not name:
             return
         report = prep_recipe.run_step(self.study, {"op": "export", "path": name},
@@ -502,15 +357,10 @@ class PrepWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(report.text().split("\n")[0], 10000)
 
     def _refresh(self, fit: bool = False, rebuild: bool = True) -> None:
-        showing_mesh = (self.mesh_triangles is not None
-                        and self.mesh_action.isChecked())
-        self.viewport.pick_kinds = () if showing_mesh else ("face",)
         if not rebuild:
             pass
         elif self.study is None:
             self.viewport.set_scene(SceneBuffers.empty_scene())
-        elif showing_mesh:
-            self.viewport.set_scene(_mesh_scene(self.mesh_triangles))
         else:
             data = scene(self.study)
             labels = {index + 1: body.name for index, body in enumerate(self.study.bodies)}
@@ -568,10 +418,7 @@ class PrepWindow(QtWidgets.QMainWindow):
         groups = QtWidgets.QTreeWidgetItem(self.tree, [f"Группы ({len(study.groups)})", ""])
         for name, group in study.groups.items():
             if group.kind == FACE_GROUP:
-                text = f"{group.size} гр."
-                if name in self.local_sizes:
-                    text += f", сетка {self.local_sizes[name]:.3g}"
-                item = QtWidgets.QTreeWidgetItem(groups, [name, text])
+                item = QtWidgets.QTreeWidgetItem(groups, [name, f"{group.size} гр."])
                 item.setIcon(0, _swatch(PALETTE[self._group_colour(name) - 1]))
             else:
                 item = QtWidgets.QTreeWidgetItem(groups, [name, f"тела: {group.size}"])
@@ -673,40 +520,8 @@ class PrepWindow(QtWidgets.QMainWindow):
             return
         name = payload[1]
         menu = QtWidgets.QMenu(self)
-        group = self.study.groups.get(name)
-        if group is not None and group.kind == FACE_GROUP:
-            menu.addAction("Размер сетки у группы…",
-                           lambda: self._local_size(name))
         menu.addAction("Удалить группу", lambda: self._step(prep.drop_group, name))
         menu.exec(self.tree.viewport().mapToGlobal(position))
-
-    def _local_size(self, name: str) -> None:
-        value = dialogs.ask_number(self, "Размер сетки", f"Размер элемента у «{name}», мм "
-                                   f"(0 — как везде)", self.local_sizes.get(name, 0.0))
-        if value is None:
-            return
-        if value > 0:
-            self.local_sizes[name] = value
-        else:
-            self.local_sizes.pop(name, None)
-        self._fill_tree()
-
-
-def _mesh_scene(triangles) -> SceneBuffers:
-    """Сетка как сцена: треугольники поверхности и их рёбра."""
-    positions = np.ascontiguousarray(triangles.reshape(-1, 3), dtype=np.float32)
-    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
-    normals = np.cross(b - a, c - a)
-    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-    lengths[lengths == 0.0] = 1.0
-    normals = np.repeat((normals / lengths).astype(np.float32), 3, axis=0)
-    edges = np.stack([a, b, b, c, c, a], axis=1).reshape(-1, 3).astype(np.float32)
-    return SceneBuffers(positions=positions, normals=normals,
-                        ids=np.ones(len(positions), np.uint32),
-                        edge_positions=edges,
-                        edge_ids=np.ones(len(edges), np.uint32),
-                        labels={1: "сетка"})
-
 
 def _file_stem(name: str) -> str:
     return "".join(character if character.isalnum() or character in "-_." else "_"

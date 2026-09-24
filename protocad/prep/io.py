@@ -270,14 +270,14 @@ def from_document(document, folder=None) -> Study:
     формы ядра между процессами нельзя (`docs/08_ENGINE_BACKEND.md`, §16.3),
     и файл — это та самая граница, только видимая.
     """
+    import re
     import tempfile
-
-    from .names import solver_name
 
     folder = Path(folder) if folder else Path(tempfile.mkdtemp(prefix="protocad-prep-"))
     folder.mkdir(parents=True, exist_ok=True)
     title = getattr(document, "designation", "") or getattr(document, "name", "деталь")
-    path = folder / f"{solver_name(title)}.step"
+    # В имени файла — только то, что примет любая файловая система.
+    path = folder / f"{re.sub(r'[^0-9A-Za-zА-Яа-яЁё._-]+', '_', title) or 'деталь'}.step"
     result = document.export(path)
     if not result.ok:
         raise ImportError_(f"движок не выгрузил деталь: {result.message}")
@@ -335,66 +335,8 @@ def read_container(path) -> list:
     return found
 
 
-# --- BREP и STL ----------------------------------------------------------
+# --- BREP ---------------------------------------------------------------
 
 
 def write_brep(study: Study, path) -> Path:
     return Path(kernel.export_brep(study.compound(), path))
-
-
-def write_stl(study: Study, path, deflection: float = 0.0, scale: float = 1.0,
-              by_groups: bool = True) -> dict:
-    """ASCII STL с ИМЕНОВАННЫМИ частями — по одной на группу граней.
-
-    Так его ждёт snappyHexMesh (OpenFOAM): каждое `solid <имя>` становится
-    отдельной границей. Грани вне групп идут частью по имени тела. Грань в
-    двух группах уходит в первую — и об этом возвращается замечание, иначе
-    граничное условие молча окажется не там.
-
-    Возвращает {"regions": {имя: треугольников}, "notes": [...]}.
-    """
-    import numpy as np
-
-    from .display import face_triangles
-    from .names import solver_names
-
-    path = Path(path)
-    deflection = deflection or max(study.diagonal() * 1e-3, 1e-3)
-    regions: dict = {}
-    notes = []
-    for index in range(study.face_count):
-        groups = study.groups_of_face(index) if by_groups else []
-        if len(groups) > 1:
-            notes.append(f"грань {index} входит в группы {groups}; записана "
-                         f"в «{groups[0]}»")
-        owner = groups[0] if groups else (study.owners(index) or ["поверхность"])[0]
-        regions.setdefault(owner, []).append(index)
-    names = solver_names(list(regions))
-    counts = {}
-    with open(path, "w", encoding="ascii") as stream:
-        for region, faces in regions.items():
-            label = names[region]
-            stream.write(f"solid {label}\n")
-            total = 0
-            for index in faces:
-                triangles = face_triangles(study.face(index), deflection)
-                if triangles is None:
-                    notes.append(f"грань {index}: не разбилась на треугольники")
-                    continue
-                triangles = triangles * scale
-                a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
-                normals = np.cross(b - a, c - a)
-                lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-                lengths[lengths == 0.0] = 1.0
-                normals = normals / lengths
-                for normal, corners in zip(normals, triangles):
-                    stream.write("  facet normal {:.6e} {:.6e} {:.6e}\n"
-                                 "    outer loop\n".format(*normal))
-                    for point in corners:
-                        stream.write("      vertex {:.9e} {:.9e} {:.9e}\n"
-                                     .format(*point))
-                    stream.write("    endloop\n  endfacet\n")
-                total += len(triangles)
-            stream.write(f"endsolid {label}\n")
-            counts[label] = total
-    return {"regions": counts, "notes": notes, "names": names}

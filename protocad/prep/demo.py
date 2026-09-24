@@ -37,7 +37,6 @@ RECIPE = {
         {"op": "group", "name": "Вал",
          "rule": {"type": "cylinder", "radius": [9.9, 10.1]}},
         {"op": "group", "name": "Сталь", "kind": "bodies", "bodies": ["*"]},
-        {"op": "mesh", "size": 6.0, "order": 2, "local": {"Вал": 2.0},
-         "outputs": ["bracket.inp", "bracket.msh"]},
+        {"op": "export", "path": "bracket-prepared.step"},
     ],
 }

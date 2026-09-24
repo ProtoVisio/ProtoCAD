@@ -1,8 +1,8 @@
 """Рецепт подготовки: шаги, которые повторяются на новой версии геометрии.
 
 Подготовка к расчёту — не разовая работа. Конструктор меняет деталь,
-выгружает STEP заново, и всё — лечение, упрощение, разрез, группы, сетку —
-надо сделать снова. Рецепт записывает шаги, и повтор — одна команда:
+выгружает STEP заново, и всё — лечение, упрощение, группы — надо сделать
+снова. Рецепт записывает шаги, и повтор — одна команда:
 
     python -m protocad.prep run bracket.prep.json
 
@@ -14,11 +14,9 @@
       "steps": [
         {"op": "heal"},
         {"op": "defeature", "holes": 6, "fillets": 2},
-        {"op": "cut", "origin": [0, 0, 0], "normal": [1, 0, 0]},
-        {"op": "group", "name": "fixed",
+        {"op": "group", "name": "Опора",
          "rule": {"type": "plane", "normal": [0, 0, -1], "at": "max"}},
-        {"op": "group", "name": "steel", "kind": "bodies", "bodies": ["*"]},
-        {"op": "mesh", "size": 3, "order": 2, "outputs": ["bracket.inp"]},
+        {"op": "group", "name": "Сталь", "kind": "bodies", "bodies": ["*"]},
         {"op": "export", "path": "bracket-prepared.step"}
       ]
     }
@@ -41,19 +39,6 @@ from .model import Report, Study
 SCHEMA = 1
 
 
-def _mesh_step(study, step: dict, base: Path) -> Report:
-    from .mesh import MeshSpec, mesh
-
-    spec_data = dict(step.get("spec") or {})
-    for key in MeshSpec.__dataclass_fields__:
-        if key in step:
-            spec_data[key] = step[key]
-    outputs = [str(_path(base, item)) for item in step.get("outputs") or ()]
-    return mesh(study, MeshSpec.from_dict(spec_data), outputs,
-                scale=float(step.get("scale", 1.0)),
-                timeout=float(step.get("timeout", 1800.0)))
-
-
 def _export_step(study, step: dict, base: Path) -> Report:
     from . import io
 
@@ -65,13 +50,9 @@ def _export_step(study, step: dict, base: Path) -> Report:
             io.write_step(study, path)
         elif suffix in io.BREP_EXTENSIONS:
             io.write_brep(study, path)
-        elif suffix == ".stl":
-            written = io.write_stl(study, path, scale=float(step.get("scale", 1.0)))
-            for note in written["notes"]:
-                report.note("STL", note)
         else:
             return report.fail("BAD_FORMAT", f"геометрию в {suffix} не пишем: "
-                               f"STEP, BREP или STL")
+                               f"STEP или BREP")
     except Exception as failure:  # noqa: BLE001
         return report.fail("EXPORT_FAILED", f"{path.name}: {failure}")
     report.message = f"записано: {path.name}"
@@ -81,10 +62,7 @@ def _export_step(study, step: dict, base: Path) -> Report:
 
 def _operations() -> dict:
     from .check import check
-    from .cut import cut_by_plane, split_by_plane
     from .defeature import defeature
-    from .fluid import enclosure
-    from .glue import glue
     from .heal import heal
     from .select import drop_group, make_group
 
@@ -92,17 +70,13 @@ def _operations() -> dict:
         "check": check,
         "heal": heal,
         "defeature": defeature,
-        "cut": cut_by_plane,
-        "split": split_by_plane,
-        "enclosure": enclosure,
-        "glue": glue,
         "group": make_group,
         "ungroup": drop_group,
     }
 
 
 #: Шаги, которые знают о путях: им нужен каталог рецепта.
-_WITH_PATHS = {"mesh": _mesh_step, "export": _export_step}
+_WITH_PATHS = {"export": _export_step}
 
 
 def run_step(study: Study, step: dict, base=".") -> Report:
@@ -183,17 +157,9 @@ def record(study: Study, base=None) -> dict:
             continue
         step = {"op": report.op}
         params = dict(report.params)
-        if report.op == "mesh":
-            spec = params.pop("spec", {})
-            step.update({key: value for key, value in spec.items()
-                         if value not in ({}, None)})
-            step["outputs"] = [_relative(base, item) for item in params.get("outputs", ())]
-            if params.get("scale", 1.0) != 1.0:
-                step["scale"] = params["scale"]
-        else:
-            if report.op == "export":
-                params["path"] = _relative(base, params["path"])
-            step.update(params)
+        if report.op == "export":
+            params["path"] = _relative(base, params["path"])
+        step.update(params)
         steps.append(step)
     source = study.source
     return {"schema": SCHEMA, "name": study.name,

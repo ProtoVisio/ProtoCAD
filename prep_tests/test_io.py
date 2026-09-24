@@ -48,15 +48,10 @@ def test_iges_surfaces_are_read(tmp_path):
     assert study.face_count >= 6
 
 
-def test_brep_and_stl(tmp_path):
+def test_brep_round_trip(tmp_path):
     study = study_of(("брусок", kernel.box(10, 20, 30)))
-    study.add_group("верх", faces=[study.face_count - 1])
     io.write_brep(study, tmp_path / "a.brep")
     assert io.load(tmp_path / "a.brep").bodies[0].volume == 6000.0
-    written = io.write_stl(study, tmp_path / "a.stl", scale=0.001)
-    text = (tmp_path / "a.stl").read_text()
-    assert "solid verkh" in text and "solid brusok" in text
-    assert sum(written["regions"].values()) == 12
 
 
 def test_container_with_assembly(tmp_path):

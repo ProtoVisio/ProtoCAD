@@ -117,9 +117,6 @@ class Report:
     findings: list = field(default_factory=list)
     before: dict = field(default_factory=dict)
     after: dict = field(default_factory=dict)
-    #: Крупные данные для показа (треугольники сетки). В журнал и в JSON не
-    #: идут: это картинка, а не итог.
-    preview: object = field(default=None, repr=False, compare=False)
 
     def note(self, code: str, message: str, severity: str = WARNING,
              faces=(), edges=(), bodies=()) -> Finding:
@@ -173,9 +170,6 @@ class Study:
         self.bodies: list = []
         self.groups: dict = {}
         self.log: list = []
-        #: Склеены ли тела общей топологией. Любая операция по отдельным
-        #: телам склейку разрушает — об этом говорят, а не молчат.
-        self.glued = False
         self._maps = None
         for body in bodies:
             self.add_body(body.shape, body.name)
@@ -312,7 +306,6 @@ class Study:
             "bounds": [round(value, 6) for value in
                        (box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax)],
             "groups": {name: group.size for name, group in self.groups.items()},
-            "glued": self.glued,
         }
 
     # --- группы ---------------------------------------------------------
@@ -416,7 +409,6 @@ class Study:
                                    set(group.bodies), dict(group.rule))
                        for name, group in self.groups.items()},
             "log": list(self.log),
-            "glued": self.glued,
         }
 
     def restore(self, state: dict) -> None:
@@ -425,7 +417,6 @@ class Study:
                                    set(group.bodies), dict(group.rule))
                        for name, group in state["groups"].items()}
         self.log = list(state["log"])
-        self.glued = state["glued"]
         self._maps = None
 
 
