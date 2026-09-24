@@ -21,7 +21,9 @@
 
 ## Требования
 
-Python 3.10 и новее. Зависимости — в [requirements.txt](requirements.txt);
+Python 3.12 и новее: решатель эскизов `planegcs` собран только под 3.12+, на
+более старом питоне эскизы остаются без решателя. Зависимости — в
+[requirements.txt](requirements.txt);
 геометрическое ядро приходит через `cadquery-ocp` (Open CASCADE), решатель
 эскизов — `planegcs`, интерфейс — PySide6.
 

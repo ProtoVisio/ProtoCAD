@@ -259,7 +259,10 @@ def bounds(shape) -> Box:
         # человек видел трассировку вместо сообщения о том, что операция
         # ничего не оставила.
         return Box(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    return Box(*bnd.Get())
+    # Углы, а не `Get()`: в OCP 8 `Get()` отдаёт структуру вместо шести
+    # чисел, и габарит падал на любой детали. Углы одинаковы в обеих.
+    low, high = bnd.CornerMin(), bnd.CornerMax()
+    return Box(low.X(), low.Y(), low.Z(), high.X(), high.Y(), high.Z())
 
 
 def is_empty(shape) -> bool:
