@@ -727,6 +727,9 @@ class Finding:
     text: str
     units: list = field(default_factory=list)
     contact: Contact | None = None
+    #: Кого подсвечивать: у одиночки — её саму, а не соседа, до которого
+    #: зазор. Пусто — всех из ``units``.
+    focus: list = field(default_factory=list)
 
 
 def findings(device: Device, report: Report) -> list:
@@ -750,7 +753,7 @@ def findings(device: Device, report: Report) -> list:
             text = (f"«{name(key)}» не касается ни одной детали: зазор "
                     f"{nearest.distance:.3g} мм до «{name(other(nearest, key))}» на площади "
                     f"{nearest.area:.3g} мм²")
-            found.append(Finding(ERROR, text, [key, other(nearest, key)], nearest))
+            found.append(Finding(ERROR, text, [key, other(nearest, key)], nearest, [key]))
         else:
             found.append(Finding(ERROR, f"«{name(key)}» не касается ни одной детали — в "
                                         f"расчёте она останется без отвода тепла", [key]))

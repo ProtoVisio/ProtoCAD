@@ -231,6 +231,50 @@ class Device:
             return not _has_boards(occurrence.item, self.boards, key)
         return in_board and not _looks_like_housing(occurrence.item)
 
+    def node(self, key: str):
+        """Узел дерева по ключу: (изделие, вхождение) или (корень, None)."""
+        item, occurrence = self.root, None
+        for stable_id in (key.split("/") if key else ()):
+            occurrence = next((entry for entry in getattr(item, "placements", ())
+                               if entry.stable_id == stable_id), None)
+            if occurrence is None:
+                return None, None
+            item = occurrence.item
+        return item, occurrence
+
+    def node_label(self, key: str) -> str:
+        item, occurrence = self.node(key)
+        if occurrence is not None:
+            return occurrence.label
+        return item.label if item is not None else key
+
+    def assembly_nodes(self) -> list:
+        """Узлы-сборки, кроме компонентов: [(ключ, подпись, глубина)] —
+        из них человек выбирает плату, если её не нашло само."""
+        found = [("", self.root.label or self.name, 0)]
+
+        def visit(item, path, depth):
+            for occurrence in getattr(item, "placements", ()):
+                child = occurrence.item
+                if not isinstance(child, Assembly):
+                    continue
+                here = path + (occurrence.stable_id,)
+                if key_of(here) in self.units:
+                    continue
+                found.append((key_of(here), occurrence.label, depth))
+                visit(child, here, depth + 1)
+
+        visit(self.root, (), 1)
+        return found
+
+    def unit_of_path(self, path) -> str:
+        """Единица, которой принадлежит тело показа с путём вхождений."""
+        for size in range(len(path), 0, -1):
+            key = key_of(path[:size])
+            if key in self.units:
+                return key
+        return ""
+
     # --- выборки -------------------------------------------------------------------
 
     def of_role(self, role: str) -> list:

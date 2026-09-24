@@ -1,10 +1,11 @@
-"""ProtoCAD — подготовка геометрии к расчёту.
+"""ProtoCAD — подготовка прибора к тепловому расчёту.
 
-    python protocad_prep/app.py
-    python protocad_prep/app.py деталь.step
+    python protocad_device/app.py
+    python protocad_device/app.py прибор.step
+    python protocad_device/app.py прибор.prcadAsm
 
-Без файла окно открывается с образцом — кронштейном, на котором видно
-всё: отверстия под упрощение, грань под закрепление, отверстие под вал.
+Без файла открывается образец — блок управления с платой из двух
+полукомплектов, корпусом и крепежом, с нарочно оставленными ошибками модели.
 """
 
 from __future__ import annotations
@@ -18,8 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from protocad_device.window import DeviceWindow  # noqa: E402
 from protocad_gl.viewport import default_surface_format  # noqa: E402
-from protocad_prep.window import PrepWindow  # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -29,13 +30,12 @@ def main(argv=None) -> int:
     from protocad_gl.translations import install
 
     install(app)
-    window = PrepWindow()
+    window = DeviceWindow()
+    window.show()
     if len(argv) > 1:
-        if not window.open_path(argv[1]):
-            window._demo()
+        window.open_path(argv[1])
     else:
         window._demo()
-    window.show()
     return app.exec()
 
 

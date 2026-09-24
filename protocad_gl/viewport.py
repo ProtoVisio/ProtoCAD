@@ -79,6 +79,9 @@ void main() {
         frag_color = vec4(mix(ground, sky, clamp(v_uv.y, 0.0, 1.0)), 1.0);
         return;
     }
+    // Скрытое тело не рисуется и не выбирается — ни заливкой, ни рёбрами,
+    // ни в картинке выбора.
+    if (v_group == 255u) discard;
     bool body_selected = (v_id == highlight_id && highlight_id != 0u);
     bool face_selected = (v_face == highlight_face && highlight_face != 0u);
     bool face_hover = (v_face == hover_face && hover_face != 0u);
@@ -153,6 +156,8 @@ PALETTE = (
 )
 SELECTION_COLOUR = 9
 PROBLEM_COLOUR = 10
+#: Признак «тело скрыто» в буфере признаков: шейдер такие точки отбрасывает.
+HIDDEN = 255
 
 
 @dataclass
@@ -434,6 +439,9 @@ class Viewport(QOpenGLWidget):
         #: вхождение целиком и красит детали по видам — одной таблицей на
         #: тело, а не перечнем тысяч граней. Цвет грани старше цвета тела.
         self.body_colors: dict = {}
+        #: Скрытые тела. Скрываются признаком в буфере признаков, а не
+        #: пересборкой сцены: геометрия в видеопамяти остаётся как есть.
+        self.hidden_bodies: set = set()
         self.palette = list(PALETTE)
         self.edge_selection: set[int] = set()
         # Что считается «верхом» экрана. По умолчанию мировая Z, но при
@@ -518,6 +526,7 @@ class Viewport(QOpenGLWidget):
         self.face_group = set()
         self.face_colors = {}
         self.body_colors = {}
+        self.hidden_bodies = set()
         self.edge_selection = set()
         if not keep_view:
             self._pan[:] = 0.0
@@ -627,21 +636,40 @@ class Viewport(QOpenGLWidget):
         if self.body_colors and len(self.scene.ids) == count:
             flags = _painted(self.scene.ids, self.body_colors)
         if len(self.scene.face_ids) != count:
-            return flags
+            return self._hide(flags, self.scene.ids)
         if self.face_colors:
             painted = _painted(self.scene.face_ids, self.face_colors)
             flags = np.where(painted > 0, painted, flags).astype(np.uint32)
         if self.face_group:
             wanted = np.fromiter(self.face_group, np.uint32, len(self.face_group))
             flags[np.isin(self.scene.face_ids, wanted)] = 1
-        return flags
+        return self._hide(flags, self.scene.ids)
 
     def _edge_flags(self) -> np.ndarray:
         count = len(self.scene.edge_positions)
         if not self.edge_selection or len(self.scene.edge_indices) != count:
-            return np.zeros(count, np.uint32)
-        wanted = np.fromiter(self.edge_selection, np.uint32, len(self.edge_selection))
-        return np.isin(self.scene.edge_indices, wanted).astype(np.uint32)
+            flags = np.zeros(count, np.uint32)
+        else:
+            wanted = np.fromiter(self.edge_selection, np.uint32, len(self.edge_selection))
+            flags = np.isin(self.scene.edge_indices, wanted).astype(np.uint32)
+        return self._hide(flags, self.scene.edge_ids)
+
+    def _hide(self, flags: np.ndarray, owners: np.ndarray) -> np.ndarray:
+        if not self.hidden_bodies or len(owners) != len(flags):
+            return flags
+        wanted = np.fromiter(self.hidden_bodies, np.uint32, len(self.hidden_bodies))
+        flags = np.array(flags, np.uint32, copy=True)
+        flags[np.isin(owners, wanted)] = HIDDEN
+        return flags
+
+    def set_hidden_bodies(self, bodies) -> None:
+        """Скрыть тела (номера тел сцены). Пустой набор — показать все."""
+        bodies = set(int(value) for value in bodies or ())
+        if bodies == self.hidden_bodies:
+            return
+        self.hidden_bodies = bodies
+        self._flags_dirty = True
+        self.update()
 
     def set_edge_selection(self, indices) -> None:
         """Подсветить выбранные рёбра."""
@@ -1224,8 +1252,13 @@ class Viewport(QOpenGLWidget):
         if self.scene.empty:
             return 0
         self.makeCurrent()
+        # Признаки (скрытые тела, раскраска) доливаются и здесь, а не только
+        # в кадре: щелчок сразу после «скрыть» иначе выбирал бы по прежним
+        # признакам — скрытое тело перехватывало щелчок.
         if self._dirty:
             self._upload()
+        elif self._flags_dirty:
+            self._upload_flags()
         self._prepare_state()
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)

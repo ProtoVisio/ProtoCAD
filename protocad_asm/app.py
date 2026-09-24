@@ -27,6 +27,9 @@ def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
     QtGui.QSurfaceFormat.setDefaultFormat(default_surface_format())
     app = QtWidgets.QApplication(argv)
+    from protocad_gl.translations import install
+
+    install(app)
     window = AssemblyWindow()
     files = [Path(name) for name in argv[1:]]
     if len(files) == 1 and files[0].suffix.lower() == ".prcadasm":

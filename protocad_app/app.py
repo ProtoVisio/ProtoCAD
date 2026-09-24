@@ -709,6 +709,7 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("Экспорт STEP…", self._export_step)
         file_menu.addAction("Подготовка к расчёту…", self._to_prep)
+        file_menu.addAction("Подготовка прибора к тепловому расчёту…", self._device_prep)
         file_menu.addSeparator()
         file_menu.addAction("Выход", QtGui.QKeySequence.Quit, self.close)
 
@@ -1852,6 +1853,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if path and not window.open_path(path):
             return
         window.show()
+        self._prep_windows = [item for item in getattr(self, "_prep_windows", [])
+                              if item.isVisible()] + [window]
+
+    def _device_prep(self) -> None:
+        """Прибор из STEP: платы, корпус, крепёж, расчётные случаи, контакты."""
+        from protocad_device.window import DeviceWindow
+
+        window = DeviceWindow(folder=str(self.path.parent if self.path else ROOT / "work"))
+        window.show()
+        window._open()
         self._prep_windows = [item for item in getattr(self, "_prep_windows", [])
                               if item.isVisible()] + [window]
 
@@ -3630,6 +3641,9 @@ def _absorb(target, source) -> None:
 def main() -> int:
     QtGui.QSurfaceFormat.setDefaultFormat(default_surface_format())
     app = QtWidgets.QApplication(sys.argv)
+    from protocad_gl.translations import install
+
+    install(app)
 
     try:
         if len(sys.argv) > 1:

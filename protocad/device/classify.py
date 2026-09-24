@@ -185,16 +185,23 @@ def _along(facts) -> float:
 ON_BOARD_GAP = 2.0
 
 
-def find_boards(device: Device) -> list:
-    """Узлы-платы: [(ключ узла, имя, ключ основания, пояснение)]."""
+def find_boards(device: Device, forced=(), ignored=()) -> list:
+    """Узлы-платы: [(ключ узла, имя, ключ основания, пояснение)].
+
+    ``forced`` — узлы, которые человек назвал платами: для них достаточно
+    пластины внутри. ``ignored`` — найденные платы, которые он отклонил.
+    """
     found = []
+    forced, ignored = set(forced), set(ignored)
 
     def visit(item, path, label):
         if not isinstance(item, Assembly):
             return
-        verdict = _board_verdict(device, item, path, label)
-        if verdict is not None:
-            found.append(verdict)
+        key = key_of(path)
+        if key not in ignored:
+            verdict = _board_verdict(device, item, path, label, force=key in forced)
+            if verdict is not None:
+                found.append(verdict)
         for occurrence in item.placements:
             if isinstance(occurrence.item, Assembly) and not _component_node(occurrence):
                 visit(occurrence.item, path + (occurrence.stable_id,), occurrence.label)
@@ -213,7 +220,7 @@ def _component_node(occurrence) -> bool:
     return not any(isinstance(inner.item, Assembly) for inner in occurrence.item.placements)
 
 
-def _board_verdict(device, node, path, label):
+def _board_verdict(device, node, path, label, force: bool = False):
     """Плата ли узел. Пластина — крупнейшая тонкая деталь среди детей;
     компоненты — мелкие дети, стоящие на ней."""
     plates = []
@@ -250,7 +257,7 @@ def _board_verdict(device, node, path, label):
             with_designator += 1
     named = bool(_BOARD_WORDS.search(label or "")) or bool(
         _BOARD_WORDS.search(getattr(plate.item, "name", "") or ""))
-    if with_designator >= 2 or on_board >= 4 or (named and on_board >= 1):
+    if force or with_designator >= 2 or on_board >= 4 or (named and on_board >= 1):
         reason = (f"пластина «{plate.label}» {plate_facts.plate['length']:.4g}×"
                   f"{plate_facts.plate['width']:.4g}×{plate_facts.plate['thickness']:.3g} мм, "
                   f"на ней деталей {on_board}, из них с обозначениями {with_designator}")
@@ -295,13 +302,18 @@ def _on_plate(box, plate_box, normal) -> bool:
 # --- разбор целиком ---------------------------------------------------------------
 
 
-def classify(device: Device) -> list:
+def classify(device: Device, forced=(), ignored=()) -> list:
     """Разобрать прибор: найти платы, разложить на единицы, назвать роли.
 
-    Возвращает замечания разбора — то, что человеку стоит проверить.
+    ``forced`` и ``ignored`` — поправки человека к поиску плат (ключи
+    узлов). Возвращает замечания разбора — то, что человеку стоит проверить.
     """
     notes = []
-    boards = find_boards(device)
+    boards = find_boards(device, forced, ignored)
+    missing = set(forced) - {key for key, *_rest in boards}
+    for key in sorted(missing):
+        notes.append(f"Узел «{device.node_label(key)}» платой не назначен: в нём нет "
+                     f"тонкой пластины — основания платы.")
     device.boards = {}
     substrates = {}
     for key, name, substrate, reason in boards:
