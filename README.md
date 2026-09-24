@@ -27,19 +27,49 @@
 | `device_tests/` | проверки подготовки прибора (pytest) |
 | `addon/` | верстак для FreeCAD |
 
-## Требования
+## Установка и запуск
 
-Python 3.12 и новее: решатель эскизов `planegcs` собран только под 3.12+, на
-более старом питоне эскизы остаются без решателя. Зависимости — в
-[requirements.txt](requirements.txt);
-геометрическое ядро приходит через `cadquery-ocp` (Open CASCADE), решатель
-эскизов — `planegcs`, интерфейс — PySide6.
+Нужно две вещи: **Python 3.12+** (64-битный, python.org) и — для окна
+детали — **FreeCAD 1.1** (freecad.org, обычный установщик). FreeCAD работает
+у ProtoCAD невидимым движком операций в отдельном процессе со своим Python;
+его окно не открывается. Сборка, подготовка к расчёту, подготовка прибора и
+просмотрщик работают и без FreeCAD.
 
-```bash
-python -m venv .venv
-.venv/Scripts/activate      # Windows
+Windows, командная строка в папке репозитория:
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\activate
 python -m pip install -r requirements.txt
+python -m protocad.doctor
 ```
+
+`protocad.doctor` ничего не ставит: проверяет Python, пакеты, ищет FreeCAD,
+поднимает движок и пишет, какие окна будут работать и чего не хватает.
+FreeCAD ищется в `C:\Program Files\FreeCAD 1.1` (и 1.0), в папке `FreeCAD\`
+рядом с репозиторием и в PATH; другое место — переменной окружения:
+
+```bat
+set PROTOCAD_FREECAD=D:\Программы\FreeCAD 1.1
+```
+
+Linux: FreeCAD из AppImage распаковывается командой
+`./FreeCAD_1.1.3-Linux-x86_64-py311.AppImage --appimage-extract`, и
+`PROTOCAD_FREECAD` указывает на получившуюся папку `squashfs-root`.
+
+Окна:
+
+| Что | Команда |
+|---|---|
+| деталь (нужен FreeCAD) | `python protocad_app\app.py` |
+| сборка | `python protocad_asm\app.py` |
+| подготовка прибора к тепловому расчёту | `python protocad_device\app.py [прибор.step]` |
+| подготовка геометрии к расчёту | `python protocad_prep\app.py [деталь.step]` |
+| просмотрщик | `python protocad_viewer\app.py файл.prcadAsm` |
+
+Проверки: `python -m pip install pytest`, затем
+`python -m pytest asm_tests prep_tests device_tests gl_tests` (тесты окон
+пропускаются без дисплея).
 
 ## Сборка
 

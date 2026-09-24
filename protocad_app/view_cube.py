@@ -150,6 +150,10 @@ class ViewCube(QtWidgets.QWidget):
         self.yaw = 45.0
         self.pitch = 28.0
         self.up = (0.0, 0.0, 1.0)
+        #: Оси экрана: вправо, вверх, к зрителю. Кубик рисуется по ним, а не
+        #: по двум углам: по углам не видно, перевёрнут вид или повёрнут
+        #: вокруг взгляда, и кубик показывал бы не то, что на экране.
+        self.axes = _basis(self.yaw, self.pitch, self.up)
         self._hover = None
         self._zones = self._build_zones()
 
@@ -162,19 +166,28 @@ class ViewCube(QtWidgets.QWidget):
         ]
 
     def follow(self, yaw: float, pitch: float, up=None) -> None:
-        """Показать текущее положение камеры."""
-        changed = (round(yaw, 3), round(pitch, 3)) != (round(self.yaw, 3),
-                                                       round(self.pitch, 3))
+        """Показать положение камеры, заданное углами."""
         self.yaw, self.pitch = float(yaw), float(pitch)
         if up is not None:
             self.up = tuple(float(value) for value in up)
-        if changed:
+        self._set_axes(_basis(self.yaw, self.pitch, self.up))
+
+    def follow_basis(self, basis) -> None:
+        """Показать положение камеры по её осям (строки: вправо, вверх, к
+        зрителю) — так, как их отдаёт вьюпорт."""
+        rows = [tuple(float(value) for value in row) for row in basis]
+        self._set_axes((rows[0], rows[1], rows[2]))
+
+    def _set_axes(self, axes) -> None:
+        rounded = tuple(tuple(round(value, 5) for value in axis) for axis in axes)
+        if rounded != tuple(tuple(round(value, 5) for value in axis) for axis in self.axes):
+            self.axes = axes
             self.update()
 
     # --- геометрия ---
 
     def _project(self, point) -> QtCore.QPointF:
-        right, upward, _ = _basis(self.yaw, self.pitch, self.up)
+        right, upward, _ = self.axes
         # Куб занимает виджет почти целиком. Множитель подобран так, что
         # самый дальний угол (полудиагональ 0.87 от полуребра) остаётся
         # внутри поля: при большем куб обрезается углами, при меньшем
@@ -188,7 +201,7 @@ class ViewCube(QtWidgets.QWidget):
 
     def _visible(self, zone) -> bool:
         """Видна ли зона: её направление должно смотреть на зрителя."""
-        _, _, toward = _basis(self.yaw, self.pitch, self.up)
+        _, _, toward = self.axes
         return _dot(_unit(zone), toward) > 1e-3
 
     def zone_at(self, position) -> tuple | None:
@@ -198,7 +211,7 @@ class ViewCube(QtWidgets.QWidget):
         центру зоны: клетки разной величины, и «ближе к центру» отдавало бы
         крупной грани щелчки, попавшие в узкую полосу ребра рядом с ней.
         """
-        _, _, toward = _basis(self.yaw, self.pitch, self.up)
+        _, _, toward = self.axes
         for axis in range(3):
             for sign in (-1, 1):
                 normal = [0, 0, 0]
@@ -245,7 +258,7 @@ class ViewCube(QtWidgets.QWidget):
     def paintEvent(self, _event) -> None:
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        _, _, toward = _basis(self.yaw, self.pitch, self.up)
+        _, _, toward = self.axes
 
         font = painter.font()
         font.setPointSizeF(max(6.0, self.width() * 0.058))

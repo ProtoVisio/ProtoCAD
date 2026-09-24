@@ -15,6 +15,8 @@ from OpenGL import GL
 from PySide6 import QtCore, QtGui
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
+from .camera import DEFAULT_PITCH, DEFAULT_YAW, Orbit
+
 VERTEX_SHADER = """
 #version 330 core
 layout(location = 0) in vec3 in_position;
@@ -332,63 +334,6 @@ def _orthographic(half_height: float, aspect: float, near: float, far: float):
     return matrix
 
 
-def _over_pole(yaw: float, pitch: float):
-    """Свести азимут и наклон к обычному виду, пройдя через полюс.
-
-    Наклон держится в пределах ±90°. Перевалив за 90°, камера не
-    «задирается дальше», а переходит на другую сторону: наклон
-    отражается, азимут разворачивается на 180°, верх экрана
-    переворачивается. Без этого стрелка вверх доводила деталь до вида
-    сверху и дальше картинка дёргалась — вращение переставало быть
-    непрерывным ровно там, где его чаще всего и продолжают.
-
-    Возвращает (азимут, наклон, надо ли перевернуть верх).
-    """
-    flip = False
-    while pitch > 90.0 or pitch < -90.0:
-        pitch = (180.0 - pitch) if pitch > 90.0 else (-180.0 - pitch)
-        yaw += 180.0
-        flip = not flip
-    return yaw % 360.0, pitch, flip
-
-
-def _rolled(up, direction, degrees: float):
-    """Вектор верха, повёрнутый вокруг направления взгляда (формула Родрига)."""
-    if abs(degrees) < 1e-9:
-        return up
-    axis = np.asarray(direction, np.float32)
-    length = float(np.linalg.norm(axis))
-    if length < 1e-9:
-        return up
-    axis = axis / length
-    angle = np.radians(degrees)
-    up = np.asarray(up, np.float32)
-    return (up * np.cos(angle)
-            + np.cross(axis, up) * np.sin(angle)
-            + axis * float(np.dot(axis, up)) * (1.0 - np.cos(angle))).astype(np.float32)
-
-
-def _look_at(eye, target, up) -> np.ndarray:
-    forward = target - eye
-    forward = forward / max(np.linalg.norm(forward), 1e-9)
-    side = np.cross(forward, up)
-    if np.linalg.norm(side) < 1e-3:
-        # Взгляд вдоль «верха»: поворот камеры вырожден, и «право» экрана
-        # определяется остатком в тысячные — вид разворачивается на
-        # произвольный угол. Сверху пластина 80 × 120 показывалась шире,
-        # чем выше. Берём другую ось: любую, лишь бы не совпадала.
-        for candidate in ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)):
-            side = np.cross(forward, np.array(candidate, np.float32))
-            if np.linalg.norm(side) > 1e-3:
-                break
-    side = side / max(np.linalg.norm(side), 1e-9)
-    true_up = np.cross(side, forward)
-    matrix = np.eye(4, dtype=np.float32)
-    matrix[0, :3], matrix[1, :3], matrix[2, :3] = side, true_up, -forward
-    matrix[:3, 3] = -matrix[:3, :3] @ eye
-    return matrix
-
-
 class Viewport(QOpenGLWidget):
     """Вид сцены: вращение, приближение, панорама, выбор тела."""
 
@@ -404,6 +349,10 @@ class Viewport(QOpenGLWidget):
     #: Камера сдвинулась: угол поворота и наклон в градусах. Нужен кубику
     #: видов, чтобы показывать то же положение, что и деталь.
     camera_moved = QtCore.Signal(float, float)
+    #: Камера повернулась: оси экрана в координатах модели (строки 3×3:
+    #: вправо, вверх, к зрителю). Кубику видов нужны именно они — по двум
+    #: углам не видно, перевёрнут вид или нет.
+    camera_turned = QtCore.Signal(object)
 
     def __init__(self, scene: SceneBuffers | None = None, parent=None):
         super().__init__(parent)
@@ -449,14 +398,12 @@ class Viewport(QOpenGLWidget):
         # взгляда, и «право» экрана определяется остатком в сотые доли —
         # вид разворачивается на произвольный угол. В режиме эскиза сюда
         # кладётся вторая ось плоскости, и чертёж лежит как нарисован.
-        self.up_hint = np.array([0.0, 0.0, 1.0], np.float32)
-        #: Крен — поворот вокруг направления взгляда, третья степень
-        #: свободы камеры. Без него вид нельзя поставить произвольно.
-        self.roll = 0.0
-        #: Перевалили ли за полюс. Наклон при этом остаётся в пределах
-        #: ±90°, а азимут разворачивается — так вращение стрелками идёт
-        #: НЕПРЕРЫВНО в одну сторону экрана, без рывка на полюсе.
-        self.upside = False
+        #
+        # Поворот камеры хранится осями экрана (`protocad_gl.camera`), а не
+        # углами: у углов есть полюс, и на виде сверху вращение мышью
+        # переставало работать и срывалось рывком на 90°.
+        self.orbit = Orbit()
+        self._up_hint = np.array([0.0, 0.0, 1.0], np.float32)
         self.dim = 0.0
         # Что можно выбирать щелчком. Пустой набор — выбор выключен: в
         # режиме эскиза щелчок принадлежит эскизу, а не детали.
@@ -547,7 +494,9 @@ class Viewport(QOpenGLWidget):
             self.center = ((low + high) / 2).astype(np.float32)
             self.radius = float(np.linalg.norm(high - low) / 2) or 1.0
         if not keep_orientation:
-            self.yaw, self.pitch, self.zoom = 45.0, 28.0, 1.0
+            self._up_hint = np.array([0.0, 0.0, 1.0], np.float32)
+            self.orbit.set_angles(DEFAULT_YAW, DEFAULT_PITCH, self._up_hint)
+            self.zoom = 1.0
 
     def fit_view(self) -> None:
         self._pan[:] = 0.0
@@ -764,12 +713,11 @@ class Viewport(QOpenGLWidget):
     def _camera_key(self) -> tuple:
         """Всё, от чего зависят матрицы. Иного состояния камеры нет."""
         return (
-            float(self.yaw), float(self.pitch), float(self.roll),
+            self.orbit.basis().tobytes(),
             float(self.zoom), float(self.radius),
-            bool(self.perspective), bool(self.flipped),
+            bool(self.perspective),
             self.width(), self.height(),
             self.center.tobytes(), self._pan.tobytes(),
-            self.up_hint.tobytes(),
         )
 
     def _matrices(self):
@@ -790,23 +738,8 @@ class Viewport(QOpenGLWidget):
         if memo is not None and memo[0] == key:
             return memo[1]
         distance = self.radius * 2.6 * self.zoom
-        yaw = np.radians(self.yaw)
-        # Наклон НЕ ограничивается: он проходит через полюс и идёт дальше.
-        # Ровно на полюсе вектор верха вырождается — это ловит _look_at.
-        pitch = np.radians(self.pitch)
         target = self.center + self._pan
-        eye = target + np.array(
-            [
-                np.cos(pitch) * np.cos(yaw) * distance,
-                np.cos(pitch) * np.sin(yaw) * distance,
-                np.sin(pitch) * distance,
-            ],
-            np.float32,
-        )
-        # За полюсом верх переворачивается: без этого картинка встаёт вверх
-        # ногами ровно в тот момент, когда наклон переваливает за 90°.
-        upward = -self.up_hint if self.flipped else self.up_hint
-        view = _look_at(eye, target, _rolled(upward, target - eye, self.roll))
+        view = self.orbit.view_matrix(target, distance)
         aspect = max(self.width(), 1) / max(self.height(), 1)
         near, far = self.radius * 0.02, self.radius * 30.0
         if self.perspective:
@@ -991,7 +924,7 @@ class Viewport(QOpenGLWidget):
 
     def _camera_state(self) -> tuple:
         return (
-            round(self.yaw, 4), round(self.pitch, 4), round(self.roll, 4),
+            tuple(round(float(value), 6) for value in self.orbit.basis().ravel()),
             round(self.zoom, 6),
             tuple(round(float(value), 4) for value in self._pan),
             tuple(round(float(value), 4) for value in self.center),
@@ -1007,6 +940,7 @@ class Viewport(QOpenGLWidget):
         if self.overlay_widget is not None:
             self.overlay_widget.update()
         self.camera_moved.emit(self.yaw, self.pitch)
+        self.camera_turned.emit(self.orbit.basis())
 
     # --- управление ---
 
@@ -1057,41 +991,66 @@ class Viewport(QOpenGLWidget):
             self.rotate_by(-delta.x() * 0.4, delta.y() * 0.4)
 
     def rotate_by(self, yaw: float, pitch: float) -> None:
-        """Повернуть камеру. Наклон идёт по кругу, а не упирается в отвес.
+        """Повернуть вид вокруг осей ЭКРАНА: ``yaw`` — вокруг вертикали
+        экрана, ``pitch`` — вокруг горизонтали (плюс поднимает глаз).
 
-        Упор означал, что стрелками вверх и вниз деталь доводится до вида
-        сверху и дальше не идёт — перевернуть её и посмотреть снизу тем же
-        движением нельзя. Теперь наклон проходит через полюс: за 90°
-        камера переваливает на другую сторону, азимут разворачивается на
-        180°, а вектор верха переворачивается вместе с ней — иначе
-        картинка в этот момент дёрнулась бы вверх ногами.
+        Так вращают в SolidWorks: сколько ни веди мышь в одну сторону,
+        деталь крутится дальше — без шва на 360° и без упора на полюсе.
         """
-        # Когда камера перевалила за полюс, экран перевёрнут: движение
-        # «вверх» соответствует уже обратному знаку наклона. Без этого
-        # стрелка вверх упиралась в полюс и начинала прыгать туда-сюда
-        # между 90° и 75° вместо того, чтобы вести деталь дальше.
-        if self.upside:
-            yaw, pitch = -yaw, -pitch
-        self.yaw, self.pitch, flip = _over_pole(
-            self.yaw + yaw, self.pitch + pitch)
-        if flip:
-            self.upside = not self.upside
+        self.orbit.rotate(yaw, pitch)
         self.camera_changed()
-
-    @property
-    def flipped(self) -> bool:
-        """Смотрим ли мы из-за полюса. Тогда верх экрана — противоположный."""
-        return self.upside
 
     def roll_by(self, degrees: float) -> None:
         """Повернуть камеру ВОКРУГ направления взгляда.
 
-        Без этого деталь нельзя поставить в произвольное положение: азимут
-        и наклон дают только две степени свободы из трёх, и, например,
+        Без этого деталь нельзя поставить в произвольное положение: две
+        оси экрана дают только две степени свободы из трёх, и, например,
         поставить ребро строго горизонтально удаётся лишь случайно.
         """
-        self.roll = (self.roll + degrees) % 360.0
+        self.orbit.roll(degrees)
         self.camera_changed()
+
+    def set_view(self, toward, up=None) -> None:
+        """Смотреть со стороны ``toward`` (от детали к глазу), верх экрана —
+        по ``up``. Так ставятся именованные виды и вид на плоскость эскиза:
+        точно, без «отклонения на волос» от полюса."""
+        if up is not None:
+            self._up_hint = np.asarray(up, np.float32)
+        self.orbit.set_view(toward, self._up_hint)
+        self.camera_changed()
+
+    # --- углы: показ положения и старый способ поставить вид ---
+
+    @property
+    def yaw(self) -> float:
+        return self.orbit.yaw
+
+    @yaw.setter
+    def yaw(self, value: float) -> None:
+        self.orbit.set_angles(float(value), self.orbit.pitch, self._up_hint)
+
+    @property
+    def pitch(self) -> float:
+        return self.orbit.pitch
+
+    @pitch.setter
+    def pitch(self, value: float) -> None:
+        self.orbit.set_angles(self.orbit.yaw, float(value), self._up_hint)
+
+    @property
+    def up_hint(self) -> np.ndarray:
+        """Что считать верхом экрана, когда вид ставится углами."""
+        return self._up_hint
+
+    @up_hint.setter
+    def up_hint(self, value) -> None:
+        self._up_hint = np.asarray(value, np.float32)
+        self.orbit.set_view(self.orbit.toward, self._up_hint)
+
+    @property
+    def flipped(self) -> bool:
+        """Перевёрнут ли вид относительно оси Z модели — для показа."""
+        return float(self.orbit.up[2]) < 0.0
 
     def pan_by(self, dx: float, dy: float) -> None:
         """Сдвинуть вид ПО ЭКРАНУ.

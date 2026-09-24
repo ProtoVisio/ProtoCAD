@@ -571,7 +571,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.confirm.accepted.connect(self._finish_sketch)
         self.confirm.rejected.connect(self._cancel_sketch)
         self.confirm.hide()
-        self.viewport.camera_moved.connect(self.view_cube.follow)
+        self.viewport.camera_turned.connect(self.view_cube.follow_basis)
         self.viewport.camera_moved.connect(
             lambda *_: self.decor.update())
         self.viewport.installEventFilter(self)
@@ -1180,30 +1180,17 @@ class MainWindow(QtWidgets.QMainWindow):
         косым взглядом даже прямоугольник получается кривым, потому что
         глаз врёт про длины.
         """
-        normal = plane.normal
-        self.viewport.pitch = math.degrees(
-            math.asin(max(-1.0, min(1.0, normal[2])))
-        )
-        if abs(normal[2]) < 0.999:
-            self.viewport.yaw = math.degrees(math.atan2(normal[1], normal[0]))
-        else:
-            self.viewport.yaw = 0.0
-        # Взгляд строго по нормали даёт вырожденный поворот камеры, поэтому
-        # отклоняемся на волос: плоскость остаётся фронтальной, а «верх»
-        # определён.
-        self.viewport.pitch = max(-89.4, min(89.4, self.viewport.pitch))
+        # Взгляд строго по нормали, верх экрана — вторая ось плоскости. Камера
+        # хранит оси, а не углы, поэтому полюса нет и «отклоняться на волос»
+        # от него, как раньше, не нужно: плоскость стоит строго фронтально.
+        # Без второй оси при взгляде сверху эскиз ложился бы повёрнутым на
+        # прямой угол: прямоугольник 100 × 60 выглядел бы как 60 × 100.
+        self.viewport.set_view(plane.normal, plane.y_direction)
         # Без вписывания камера остаётся там, где её оставили в модели, и
         # эскиз открывается в произвольном приближении — иногда упёртым в
         # одну грань.
         self.viewport.zoom = 1.0
         self.viewport._pan[:] = 0.0
-        # «Верх» экрана — вторая ось плоскости. Без этого при взгляде
-        # сверху эскиз ложится повёрнутым на прямой угол: ось X уходит
-        # вверх экрана, и нарисованный прямоугольник 100 × 60 выглядит
-        # как 60 × 100.
-        import numpy as _np
-
-        self.viewport.up_hint = _np.array(plane.y_direction, _np.float32)
         self.viewport.update()
 
     def _cancel_sketch(self) -> None:
@@ -1390,13 +1377,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 "В эскизе вид закреплён на его плоскости. "
                 "Закройте эскиз или поверните вид мышью.", 5000)
             return
-        import numpy as _np
+        from protocad_gl.camera import toward_of
 
-        self.viewport.yaw = float(yaw)
-        self.viewport.pitch = float(pitch)
-        if up is not None:
-            self.viewport.up_hint = _np.array(up, _np.float32)
-        self.view_cube.follow(yaw, pitch, up)
+        # Вид ставится точно — стороной и верхом, без углов: у углов на виде
+        # сверху особая точка, и вращение оттуда срывалось рывком.
+        self.viewport.set_view(toward_of(yaw, pitch), up if up is not None
+                               else (0.0, 0.0, 1.0))
         self.viewport.update()
 
     def _view(self, key: str) -> None:

@@ -29,9 +29,12 @@ PROTOCOL = (1, 0)
 
 
 def _setup(home: str) -> None:
+    # Модуль FreeCAD лежит в bin у сборки для Windows (FreeCAD.pyd) и в lib
+    # у сборок conda — AppImage под Linux и пакета macOS (FreeCAD.so).
     binary = os.path.join(home, "bin")
-    if binary not in sys.path:
-        sys.path.insert(0, binary)
+    for folder in (os.path.join(home, "lib"), binary):
+        if os.path.isdir(folder) and folder not in sys.path:
+            sys.path.insert(0, folder)
     if hasattr(os, "add_dll_directory") and os.path.isdir(binary):
         os.add_dll_directory(binary)
 

@@ -23,6 +23,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from protocad_reader import ReaderError, open_container  # noqa: E402
+from protocad_gl.camera import Orbit  # noqa: E402
 
 VERTEX_SHADER = """
 #version 330 core
@@ -79,18 +80,6 @@ def _perspective(fov, aspect, near, far):
     return m
 
 
-def _look_at(eye, target, up):
-    forward = target - eye
-    forward /= np.linalg.norm(forward)
-    side = np.cross(forward, up)
-    side /= max(np.linalg.norm(side), 1e-9)
-    true_up = np.cross(side, forward)
-    m = np.eye(4, dtype=np.float32)
-    m[0, :3], m[1, :3], m[2, :3] = side, true_up, -forward
-    m[:3, 3] = -m[:3, :3] @ eye
-    return m
-
-
 class Viewport(QOpenGLWidget):
     """3D-вид: заливка, рёбра, выбор тела правой кнопкой."""
 
@@ -103,7 +92,10 @@ class Viewport(QOpenGLWidget):
         high = preview.positions.max(axis=0) if len(preview.positions) else np.ones(3)
         self.center = ((low + high) / 2).astype(np.float32)
         self.radius = float(np.linalg.norm(high - low) / 2) or 1.0
-        self.yaw, self.pitch, self.zoom = 45.0, 30.0, 1.0
+        # Поворот — осями, а не азимутом и наклоном: наклон упирался в ±85°,
+        # и дальше вид «залипал» (`protocad_gl.camera`).
+        self.orbit = Orbit()
+        self.zoom = 1.0
         self.highlight_id = 0
         self.show_edges = True
         self.fps = 0.0
@@ -162,12 +154,7 @@ class Viewport(QOpenGLWidget):
 
     def _mvp(self):
         distance = self.radius * 2.6 * self.zoom
-        yaw, pitch = np.radians(self.yaw), np.radians(max(-85, min(85, self.pitch)))
-        eye = self.center + np.array(
-            [np.cos(pitch) * np.cos(yaw) * distance,
-             np.cos(pitch) * np.sin(yaw) * distance,
-             np.sin(pitch) * distance], np.float32)
-        view = _look_at(eye, self.center, np.array([0, 0, 1], np.float32))
+        view = self.orbit.view_matrix(self.center, distance)
         aspect = max(self.width(), 1) / max(self.height(), 1)
         proj = _perspective(35.0, aspect, self.radius * 0.02, self.radius * 20)
         return (proj @ view).astype(np.float32), view[:3, :3].astype(np.float32)
@@ -214,8 +201,7 @@ class Viewport(QOpenGLWidget):
             return
         delta = event.position() - self._last
         self._last = event.position()
-        self.yaw -= delta.x() * 0.4
-        self.pitch += delta.y() * 0.4
+        self.orbit.rotate(-delta.x() * 0.4, delta.y() * 0.4)
 
     def wheelEvent(self, event):
         self.zoom = max(0.05, min(8.0, self.zoom * (0.88 if event.angleDelta().y() > 0 else 1.14)))

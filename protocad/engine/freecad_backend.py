@@ -45,7 +45,32 @@ SEARCH = (
     Path(r"C:\Program Files\FreeCAD 1.1"),
     Path(r"C:\Program Files\FreeCAD 1.0"),
     Path(r"C:\Program Files\FreeCAD"),
+    Path("/Applications/FreeCAD.app/Contents/Resources"),
 )
+
+
+def interpreter_of(home: Path) -> Path | None:
+    """Питон установки FreeCAD: ``bin/python.exe`` у Windows, ``bin/python``
+    у сборок conda — распакованного AppImage под Linux и пакета macOS."""
+    for name in ("python.exe", "python", "python3"):
+        candidate = home / "bin" / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _root(path: Path) -> Path | None:
+    """Корень установки по указанному пути. Понимает ``bin``, распакованный
+    AppImage (``squashfs-root`` → ``usr``) и каталог с самим корнем."""
+    if path.name.lower() == "bin" and path.is_dir():
+        path = path.parent
+    for candidate in (path, path / "usr", path / "squashfs-root" / "usr"):
+        if interpreter_of(candidate) is not None and (
+                (candidate / "bin" / "FreeCAD.pyd").is_file()
+                or (candidate / "lib" / "FreeCAD.so").is_file()
+                or (candidate / "bin" / "python.exe").is_file()):
+            return candidate
+    return None
 
 
 def find_freecad() -> Path | None:
@@ -61,16 +86,14 @@ def find_freecad() -> Path | None:
         # НЕ продолжается: молча взять другую значило бы работать не с той
         # сборкой, которую просили, — и узнать об этом на расхождении
         # результатов, а не на запуске.
-        path = Path(stated)
-        if path.name.lower() == "bin" and path.is_dir():
-            path = path.parent
-        return path if (path / "bin" / "python.exe").is_file() else None
+        return _root(Path(stated))
     for candidate in SEARCH:
-        if (candidate / "bin" / "python.exe").is_file():
-            return candidate
+        found = _root(candidate)
+        if found is not None:
+            return found
     found = shutil.which("FreeCADCmd") or shutil.which("freecadcmd")
     if found:
-        return Path(found).parent.parent
+        return _root(Path(found).parent.parent)
     return None
 
 
@@ -102,9 +125,8 @@ class FreeCADBackend:
                 "FreeCAD не найден. Положите его рядом с репозиторием в "
                 "FreeCAD/ либо укажите путь переменной PROTOCAD_FREECAD"
             )
-        interpreter = self.home / "bin" / "python.exe"
-        if not interpreter.is_file():
-            return False, f"в {self.home / 'bin'} нет python.exe"
+        if interpreter_of(self.home) is None:
+            return False, f"в {self.home / 'bin'} нет питона FreeCAD"
         return True, ""
 
     def capabilities(self) -> Capabilities:
@@ -286,7 +308,7 @@ class FreeCADBackend:
         if self._process is not None and self._process.poll() is None:
             return self._process
         server = Path(__file__).with_name("freecad_server.py")
-        interpreter = self.home / "bin" / "python.exe"
+        interpreter = interpreter_of(self.home)
         environment = dict(os.environ)
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUNBUFFERED"] = "1"
