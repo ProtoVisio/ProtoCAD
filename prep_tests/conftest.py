@@ -1,8 +1,5 @@
-"""Общее для проверок препроцессора.
-
-Каталог назван `prep_tests`, а не `tests`: `tests/` в .gitignore —
-там живут внутренние проверки, включая карантин GPL (THIRD_PARTY.md).
-"""
+"""Путь к коду и общие заготовки проверок препроцессора. Помощники — в
+`prep_helpers`: у `conftest` имя общее с соседним каталогом проверок."""
 
 import sys
 from pathlib import Path
@@ -10,17 +7,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from protocad import kernel  # noqa: E402
-from protocad.prep import Study  # noqa: E402
-
-
-def study_of(*named_shapes, name="проба"):
-    study = Study(name=name)
-    for label, shape in named_shapes:
-        study.add_body(shape, label)
-    return study
 
 
 @pytest.fixture

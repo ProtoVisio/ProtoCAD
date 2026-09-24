@@ -21,3 +21,5 @@ from .model import (  # noqa: F401
     new_id,
 )
 from .solve import blocking, solve  # noqa: F401
+from .document import AssemblyDocument  # noqa: F401
+from .importer import ImportFailed, load_component, read_step_tree  # noqa: F401

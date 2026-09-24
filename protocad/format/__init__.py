@@ -226,8 +226,14 @@ def _preview_blob(document) -> bytes:
     return buffer.getvalue()
 
 
-def write(root: Item, path: str | Path, preview=None, drawings=None) -> Path:
-    """Записать изделие со всем составом в контейнер."""
+def write(root: Item, path: str | Path, preview=None, drawings=None,
+          extras=None) -> Path:
+    """Записать изделие со всем составом в контейнер.
+
+    ``extras`` — {имя: данные JSON}: то, что знает о составе не сам состав,
+    а тот, кто его правит, — сопряжения сборки, происхождение деталей.
+    Ложится в ``extras/<имя>.json``; читатель в ПРОТО его пропускает.
+    """
     path = _target_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -252,7 +258,10 @@ def write(root: Item, path: str | Path, preview=None, drawings=None) -> Path:
         # История построения пишется вместе с результатом: без неё деталь
         # после открытия нельзя править, и параметрика существует лишь до
         # закрытия окна. Читателю в ПРОТО она не нужна — он её игнорирует.
-        if getattr(item, "is_parametric", False):
+        # Только у детали на СТАРОМ дереве: у детали на движке `is_parametric`
+        # тоже истинно, а дерева `features` нет — её намерения живут в своём
+        # файле `.prcadPart`, и запись падала на любой сборке с такой деталью.
+        if getattr(item, "is_parametric", False) and item.features is not None:
             name = f"features/{_safe(item.stable_id)}.json"
             feature_data[item.stable_id] = (name, item.features.to_dict())
             record["features"] = name
@@ -302,65 +311,88 @@ def write(root: Item, path: str | Path, preview=None, drawings=None) -> Path:
             "features": sorted(name for name, _payload in feature_data.values()),
             "preview": "preview/scene.npz" if preview is not None else None,
             "drawings": [],
+            "extras": sorted(f"extras/{name}.json" for name in (extras or {})),
         },
     }
     bom_rows = root.bom() if isinstance(root, Assembly) else []
 
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for item in items:
-            name = geometry_names.get(item.stable_id)
-            if not name:
-                continue
-            # BRepTools пишет только в файл, поэтому через временный путь.
-            temporary = path.parent / f"._{_safe(item.stable_id)}.brp"
-            kernel.export_brep(item.shape, temporary)
-            archive.write(temporary, name)
-            temporary.unlink(missing_ok=True)
+    # Во временный файл и переименование в конце — как у детали: сбой на
+    # полпути не должен оставлять контейнер, который открывается, но
+    # неполон.
+    draft = path.with_name(path.name + ".пишется")
+    try:
+        with zipfile.ZipFile(draft, "w", zipfile.ZIP_DEFLATED) as archive:
+            for item in items:
+                name = geometry_names.get(item.stable_id)
+                if not name:
+                    continue
+                # BRepTools пишет только в файл, поэтому через временный путь.
+                temporary = path.parent / f"._{_safe(item.stable_id)}.brp"
+                kernel.export_brep(item.shape, temporary)
+                archive.write(temporary, name)
+                temporary.unlink(missing_ok=True)
 
-        for name, payload in feature_data.values():
-            archive.writestr(name, json.dumps(payload, ensure_ascii=False, indent=2))
+            for name, payload in feature_data.values():
+                archive.writestr(name, json.dumps(payload, ensure_ascii=False, indent=2))
 
-        if preview is not None:
-            buffer = io.BytesIO()
-            np.savez_compressed(
-                buffer,
-                positions=preview.positions,
-                normals=preview.normals,
-                ids=preview.ids,
-                edge_positions=preview.edge_positions,
-                edge_ids=preview.edge_ids,
-                meta=np.frombuffer(
-                    json.dumps(
-                        {"stats": preview.stats, "id_to_object": preview.id_to_object},
-                        ensure_ascii=False,
-                    ).encode("utf-8"),
-                    dtype=np.uint8,
+            for name, payload in (extras or {}).items():
+                archive.writestr(f"extras/{name}.json",
+                                 json.dumps(payload, ensure_ascii=False, indent=2))
+
+            if preview is not None:
+                buffer = io.BytesIO()
+                np.savez_compressed(
+                    buffer,
+                    positions=preview.positions,
+                    normals=preview.normals,
+                    ids=preview.ids,
+                    edge_positions=preview.edge_positions,
+                    edge_ids=preview.edge_ids,
+                    meta=np.frombuffer(
+                        json.dumps(
+                            {"stats": preview.stats, "id_to_object": preview.id_to_object},
+                            ensure_ascii=False,
+                        ).encode("utf-8"),
+                        dtype=np.uint8,
+                    ),
+                )
+                archive.writestr("preview/scene.npz", buffer.getvalue())
+
+            for index, drawing in enumerate(drawings or []):
+                drawing_path = Path(drawing)
+                name = f"drawings/{index:02d}_{drawing_path.name}"
+                archive.write(drawing_path, name)
+                manifest["contents"]["drawings"].append(name)
+
+            archive.writestr(
+                "structure.json", json.dumps(structure, ensure_ascii=False, indent=2)
+            )
+            archive.writestr("bom.json", json.dumps(bom_rows, ensure_ascii=False, indent=2))
+            archive.writestr(
+                "meta/links.json",
+                json.dumps(
+                    {item.stable_id: item.proto_id for item in items if item.proto_id},
+                    ensure_ascii=False,
+                    indent=2,
                 ),
             )
-            archive.writestr("preview/scene.npz", buffer.getvalue())
-
-        for index, drawing in enumerate(drawings or []):
-            drawing_path = Path(drawing)
-            name = f"drawings/{index:02d}_{drawing_path.name}"
-            archive.write(drawing_path, name)
-            manifest["contents"]["drawings"].append(name)
-
-        archive.writestr(
-            "structure.json", json.dumps(structure, ensure_ascii=False, indent=2)
-        )
-        archive.writestr("bom.json", json.dumps(bom_rows, ensure_ascii=False, indent=2))
-        archive.writestr(
-            "meta/links.json",
-            json.dumps(
-                {item.stable_id: item.proto_id for item in items if item.proto_id},
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
-        archive.writestr(
-            "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)
-        )
+            archive.writestr(
+                "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)
+            )
+        draft.replace(path)
+    except BaseException:
+        draft.unlink(missing_ok=True)
+        raise
     return path
+
+
+def read_extra(path: str | Path, name: str):
+    """Данные ``extras/<имя>.json`` контейнера. ``None`` — их там нет."""
+    with zipfile.ZipFile(Path(path)) as archive:
+        entry = f"extras/{name}.json"
+        if entry not in archive.namelist():
+            return None
+        return json.loads(archive.read(entry).decode("utf-8"))
 
 
 def read(path: str | Path) -> tuple[Item, dict]:

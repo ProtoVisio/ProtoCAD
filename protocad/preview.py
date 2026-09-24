@@ -113,7 +113,8 @@ def build(
     instances = 0
     next_face_id = 1
 
-    def emit(item: Item, matrix: np.ndarray, label: str, occurrence_id: str) -> None:
+    def emit(item: Item, matrix: np.ndarray, label: str, occurrence_id: str,
+             path: tuple = ()) -> None:
         nonlocal tessellated, instances, next_face_id
         # Деталь, построенная ДВИЖКОМ, приносит готовую сетку числами:
         # разбивать её ядром в нашем процессе не надо и нельзя — второй
@@ -151,6 +152,10 @@ def build(
             "name": item.name,
             "proto_id": item.proto_id,
             "faces": int(base_faces.max()) + 1 if len(base_faces) else 0,
+            # Путь вхождений от корня до детали. Во вложенной сборке
+            # щелчок попадает в деталь подсборки, а сопрягают и двигают
+            # вхождение верхнего уровня — без пути его не найти.
+            "path": list(path) or ([occurrence_id] if occurrence_id else []),
         }
         positions = _apply(matrix, base_pos)
         # Нормали поворачиваются, но не переносятся.
@@ -191,17 +196,18 @@ def build(
                     np.full(len(base_vertices), identifier, dtype=np.uint32)
                 )
 
-    def walk(assembly: Assembly, parent: np.ndarray) -> None:
+    def walk(assembly: Assembly, parent: np.ndarray, trail: tuple) -> None:
         for occurrence in assembly.placements:
             matrix = parent @ occurrence.transform
             item = occurrence.item
+            path = trail + (occurrence.stable_id,)
             if isinstance(item, Assembly):
-                walk(item, matrix)
+                walk(item, matrix, path)
             else:
-                emit(item, matrix, occurrence.label, occurrence.stable_id)
+                emit(item, matrix, occurrence.label, occurrence.stable_id, path)
 
     if isinstance(root, Assembly):
-        walk(root, np.eye(4))
+        walk(root, np.eye(4), ())
     else:
         emit(root, np.eye(4), root.label, "")
 

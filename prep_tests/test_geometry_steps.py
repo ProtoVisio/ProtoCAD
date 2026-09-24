@@ -2,7 +2,7 @@
 
 import math
 
-from conftest import study_of
+from prep_helpers import study_of
 from protocad import kernel
 from protocad.prep import check, defeature, find_fillets, find_holes, heal
 from protocad.prep.model import faces_of_shape
