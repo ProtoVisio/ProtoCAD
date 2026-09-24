@@ -93,7 +93,13 @@ class Engine:
                          "partdesign.revolution", "partdesign.groove",
                          "partdesign.hole", "partdesign.thickness",
                          "partdesign.linearpattern",
-                         "partdesign.polarpattern", "partdesign.mirrored"],
+                         "partdesign.polarpattern", "partdesign.mirrored",
+                         "partdesign.additivepipe",
+                         "partdesign.subtractivepipe",
+                         "partdesign.additiveloft",
+                         "partdesign.subtractiveloft",
+                         "partdesign.additivehelix",
+                         "partdesign.subtractivehelix"],
             "end_conditions": ends,
             "notes": (f"OCCT {Part.OCC_VERSION}, python "
                       f"{sys.version.split()[0]}; прилив: {pad_types}; "
@@ -428,7 +434,9 @@ class Engine:
         # `AddSubShape` нет, и предпросмотр показывал всё тело целиком —
         # то есть закрашивал деталь и не говорил о ней ничего. Форма «до»
         # здесь под рукой: это форма опоры.
-        changed, changed_kind = _change(base.Shape, shape)
+        # Только для предпросмотра: готовой операции окно его не показывает.
+        changed, changed_kind = (_change(base.Shape, shape)
+                                 if request.get("preview") else (None, ""))
         answer = {
             "status": "valid",
             "featureId": feature.Name,
@@ -513,6 +521,253 @@ class Engine:
         return self._finish(document, body, feature, request,
                             created, previous_tip, litter,
                             ["angle_deg", "axis"])
+
+    # --- протяжка, сечения, спираль --------------------------------------
+    #
+    # Все три — штатные операции PartDesign (`Pipe`, `Loft`, `Helix`), и
+    # своей геометрии здесь нет (§20.1). Профили, траектория и сечения
+    # лежат на тех же носителях, что и у выдавливания: двумерный объект с
+    # плоскостью эскиза, пришедшей от ProtoCAD. Носители названы от имени
+    # операции с подчёркиванием — так их находит и убирает `drop_feature`.
+
+    def _start_profile(self, request: dict, arguments=("profile",)):
+        """Проверить профиль ДО того, как в документе появятся объекты.
+
+        ``None`` — профиль годен, иначе готовый отказ.
+        """
+        profile = request.get("profile") or {}
+        if not (profile.get("regions") or []):
+            return _error("NO_PROFILE",
+                          "профиль пуст: в эскизе нет замкнутого контура",
+                          list(arguments))
+        try:
+            _face_of(profile.get("regions"), _into(_placement_of(profile)),
+                     None, None, profile.get("normal") or (0.0, 0.0, 1.0))
+        except Exception as failure:  # noqa: BLE001
+            return _error("BAD_PROFILE", f"профиль не собрался: {failure}",
+                          list(arguments))
+        return None
+
+    def _new_carrier(self, document, body, name: str, profile: dict,
+                     path: bool = False):
+        carrier = document.addObject("Part::Part2DObjectPython", name)
+        if path:
+            _set_path(carrier, profile)
+        else:
+            _set_profile(carrier, profile)
+        body.addObject(carrier)
+        return carrier
+
+    def sweep(self, request: dict) -> dict:
+        """Протяжка профиля вдоль траектории: `PartDesign::AdditivePipe`.
+
+        Траектория лежит на своём носителе ребрами, профиль — гранью. Рёбра
+        траектории перечисляются ВСЕ: `Spine` у PartDesign — это объект и
+        список его рёбер, и пропущенное ребро молча укорачивает протяжку.
+        """
+        document = self._document(request.get("document_id", "документ"))
+        body = self._body(document, request.get("body_id", "Тело"))
+        refusal = self._start_profile(request)
+        if refusal is not None:
+            return refusal
+        path = request.get("path") or {}
+        try:
+            _path_wire(path, _into(_placement_of(path)))
+        except Exception as failure:  # noqa: BLE001
+            return _error("BAD_PATH", f"траектория не собралась: {failure}",
+                          ["path"])
+        mode = _PIPE_MODES.get(request.get("mode") or "standard")
+        transition = _PIPE_TRANSITIONS.get(
+            request.get("transition") or "transformed")
+        if mode is None or transition is None:
+            return _error("BAD_MODE", "неизвестный способ протяжки",
+                          ["mode", "transition"])
+        subtract = bool(request.get("subtract"))
+        if subtract and not _has_shape(body):
+            return _error("NO_BASE", "нечего резать: тело ещё не построено",
+                          ["body_id"])
+
+        editing = request.get("feature_id") or ""
+        created = not editing
+        previous_tip = getattr(body, "Tip", None)
+        litter = []
+        profile = request.get("profile") or {}
+        if editing:
+            feature = document.getObject(editing)
+            if feature is None:
+                return _error("NO_FEATURE", f"операции {editing!r} нет", [])
+            carrier = _carrier_of(feature)
+            _set_profile(carrier, profile)
+            carrier.touch()
+            track = feature.Spine[0]
+            _set_path(track, path)
+            track.touch()
+        else:
+            self.counter += 1
+            kind = ("PartDesign::SubtractivePipe" if subtract
+                    else "PartDesign::AdditivePipe")
+            feature = document.addObject(kind, f"Протяжка{self.counter}")
+            carrier = self._new_carrier(document, body,
+                                        f"{feature.Name}_профиль", profile)
+            track = self._new_carrier(document, body,
+                                      f"{feature.Name}_траектория", path,
+                                      path=True)
+            body.addObject(feature)
+            feature.Profile = carrier
+            litter = [carrier, track]
+        feature.Spine = (track, [f"Edge{number + 1}"
+                                 for number in range(len(track.Shape.Edges))])
+        feature.Mode = mode
+        feature.Transition = transition
+        return self._finish(document, body, feature, request,
+                            created, previous_tip, litter,
+                            ["path", "profile"])
+
+    def loft(self, request: dict) -> dict:
+        """Тело по сечениям: `PartDesign::AdditiveLoft`.
+
+        Первое сечение — профиль операции, остальные — `Sections` по
+        порядку. При правке число сечений может измениться: лишние
+        носители убираются, недостающие заводятся, а совпадающие правятся
+        на месте — на них ссылается сама операция.
+        """
+        document = self._document(request.get("document_id", "документ"))
+        body = self._body(document, request.get("body_id", "Тело"))
+        refusal = self._start_profile(request)
+        if refusal is not None:
+            return refusal
+        sections = list(request.get("sections") or ())
+        if not sections:
+            return _error("NO_SECTIONS", "нужно хотя бы два сечения",
+                          ["sections"])
+        for number, section in enumerate(sections, start=2):
+            refusal = self._start_profile({"profile": section}, ["sections"])
+            if refusal is not None:
+                refusal["diagnostics"][0]["message"] = (
+                    f"сечение {number}: "
+                    + refusal["diagnostics"][0]["message"])
+                return refusal
+        subtract = bool(request.get("subtract"))
+        if subtract and not _has_shape(body):
+            return _error("NO_BASE", "нечего резать: тело ещё не построено",
+                          ["body_id"])
+
+        editing = request.get("feature_id") or ""
+        created = not editing
+        previous_tip = getattr(body, "Tip", None)
+        litter = []
+        profile = request.get("profile") or {}
+        if editing:
+            feature = document.getObject(editing)
+            if feature is None:
+                return _error("NO_FEATURE", f"операции {editing!r} нет", [])
+            carrier = _carrier_of(feature)
+            _set_profile(carrier, profile)
+            carrier.touch()
+            carriers = [item[0] for item in (feature.Sections or ())]
+            spare = carriers[len(sections):]
+            carriers = carriers[:len(sections)]
+            for holder, section in zip(carriers, sections):
+                _set_profile(holder, section)
+                holder.touch()
+            for number in range(len(carriers), len(sections)):
+                self.counter += 1
+                carriers.append(self._new_carrier(
+                    document, body,
+                    f"{feature.Name}_сечение{self.counter}", sections[number]))
+            feature.Sections = [(holder, [""]) for holder in carriers]
+            for holder in spare:
+                try:
+                    document.removeObject(holder.Name)
+                except Exception:  # noqa: BLE001 — уже убран
+                    pass
+        else:
+            self.counter += 1
+            kind = ("PartDesign::SubtractiveLoft" if subtract
+                    else "PartDesign::AdditiveLoft")
+            feature = document.addObject(kind, f"Сечения{self.counter}")
+            carrier = self._new_carrier(document, body,
+                                        f"{feature.Name}_профиль", profile)
+            carriers = [self._new_carrier(
+                document, body, f"{feature.Name}_сечение{number}", section)
+                for number, section in enumerate(sections, start=2)]
+            body.addObject(feature)
+            feature.Profile = carrier
+            feature.Sections = [(holder, [""]) for holder in carriers]
+            litter = [carrier, *carriers]
+        feature.Ruled = bool(request.get("ruled"))
+        feature.Closed = bool(request.get("closed"))
+        return self._finish(document, body, feature, request,
+                            created, previous_tip, litter,
+                            ["sections", "profile"])
+
+    def helix(self, request: dict) -> dict:
+        """Профиль по винтовой линии: `PartDesign::AdditiveHelix`.
+
+        Ось — опорная линия, как у вращения, и тоже часть операции. Из
+        шага, высоты и витков FreeCAD берёт два по `Mode`, третье выводит
+        сам; передаются все три — лишнее он не читает.
+        """
+        document = self._document(request.get("document_id", "документ"))
+        body = self._body(document, request.get("body_id", "Тело"))
+        refusal = self._start_profile(request)
+        if refusal is not None:
+            return refusal
+        mode = _HELIX_MODES.get(request.get("mode") or "pitch-height")
+        if mode is None:
+            return _error("BAD_MODE", "неизвестный способ задать спираль",
+                          ["mode"])
+        refusal = _crowded_turns(request)
+        if refusal is not None:
+            return refusal
+        subtract = bool(request.get("subtract"))
+        if subtract and not _has_shape(body):
+            return _error("NO_BASE", "нечего резать: тело ещё не построено",
+                          ["body_id"])
+
+        editing = request.get("feature_id") or ""
+        created = not editing
+        previous_tip = getattr(body, "Tip", None)
+        litter = []
+        profile = request.get("profile") or {}
+        if editing:
+            feature = document.getObject(editing)
+            if feature is None:
+                return _error("NO_FEATURE", f"операции {editing!r} нет", [])
+            carrier = _carrier_of(feature)
+            _set_profile(carrier, profile)
+            carrier.touch()
+            axis = feature.ReferenceAxis[0]
+        else:
+            self.counter += 1
+            kind = ("PartDesign::SubtractiveHelix" if subtract
+                    else "PartDesign::AdditiveHelix")
+            feature = document.addObject(kind, f"Спираль{self.counter}")
+            carrier = self._new_carrier(document, body,
+                                        f"{feature.Name}_профиль", profile)
+            body.addObject(feature)
+            feature.Profile = carrier
+            axis = self._datum_line(document, body, f"{feature.Name}_ось")
+            litter = [carrier, axis]
+        try:
+            _place_axis(axis, request.get("axis_origin") or (0.0, 0.0, 0.0),
+                        request.get("axis") or (0.0, 0.0, 1.0))
+        except ValueError as failure:
+            if created:
+                self._drop(document, feature, *litter,
+                           restore_tip=(body, previous_tip))
+            return _error("BAD_AXIS", f"ось спирали: {failure}", ["axis"])
+        feature.ReferenceAxis = (axis, [""])
+        feature.Mode = mode
+        feature.Pitch = float(request.get("pitch", 5.0))
+        feature.Height = float(request.get("height", 20.0))
+        feature.Turns = float(request.get("turns", 4.0))
+        feature.Angle = float(request.get("angle_deg", 0.0))
+        feature.LeftHanded = bool(request.get("left_handed"))
+        feature.Reversed = bool(request.get("reversed"))
+        return self._finish(document, body, feature, request,
+                            created, previous_tip, litter,
+                            ["pitch", "height", "turns", "axis"])
 
     def hole(self, request: dict) -> dict:
         """Отверстие по эскизу: положения берутся из окружностей профиля."""
@@ -1475,6 +1730,90 @@ def _set_profile(carrier, profile: dict, start_offset: float = 0.0,
     carrier.Placement = place
 
 
+def _crowded_turns(request: dict):
+    """Отказ, если соседние витки налезут друг на друга. ``None`` — не налезут.
+
+    FreeCAD строит такую спираль без возражений: тело выходит «годным», а
+    объём — как у витков, лежащих порознь (проверено: шаг 1 мм при профиле
+    ⌀4 давал ровно 2π·R·A·N). То есть деталь неверная, и узнать об этом
+    можно было бы только по массе. Поэтому шаг сверяется с размером
+    профиля вдоль оси ДО построения.
+    """
+    import FreeCAD as App
+
+    profile = request.get("profile") or {}
+    axis = App.Vector(*[float(value) for value in
+                        (request.get("axis") or (0.0, 0.0, 1.0))])
+    if axis.Length < 1e-12:
+        return None
+    axis.normalize()
+    mode = request.get("mode") or "pitch-height"
+    if mode == "height-turns":
+        turns = float(request.get("turns", 0.0) or 0.0)
+        pitch = float(request.get("height", 0.0)) / turns if turns > 0 else 0.0
+    else:
+        pitch = float(request.get("pitch", 0.0) or 0.0)
+    if pitch <= 0.0:
+        return None
+    try:
+        face = _face_of(profile.get("regions") or (), None, None, None,
+                        profile.get("normal") or (0.0, 0.0, 1.0))
+    except Exception:  # noqa: BLE001 — о кривом профиле скажут и так
+        return None
+    along = [axis.dot(point) for edge in face.Edges
+             for point in edge.discretize(Number=64)]
+    extent = max(along) - min(along) if along else 0.0
+    if pitch + 1e-6 < extent:
+        return _error(
+            "TURNS_OVERLAP",
+            f"шаг спирали {pitch:g} мм меньше размера профиля вдоль оси "
+            f"{extent:.3g} мм — соседние витки налезли бы друг на друга. "
+            f"Увеличьте шаг или уменьшите профиль",
+            ["pitch", "height", "turns"])
+    return None
+
+
+def _path_wire(path: dict, into=None):
+    """Траектория протяжки — ОДНА цепочка кривых.
+
+    Берётся незамкнутая цепочка эскиза, а если траектория замкнута — петля
+    области. Две и больше отказываются: из разных линий траектории не
+    получается, и выбрать одну из них за человека значило бы протянуть не
+    по той.
+    """
+    loops = [list(chain) for chain in (path.get("chains") or ()) if chain]
+    for region in path.get("regions") or ():
+        if region.get("outer"):
+            loops.append(list(region["outer"]))
+        loops.extend(list(loop) for loop in (region.get("inner") or ()) if loop)
+    if not loops:
+        raise ValueError("в эскизе траектории нет линий")
+    if len(loops) > 1:
+        raise ValueError(
+            f"в эскизе траектории {len(loops)} отдельных линии, а нужна одна "
+            f"связная — соедините их или уберите лишние")
+    return _wire(loops[0], into, path.get("normal") or (0.0, 0.0, 1.0))
+
+
+def _set_path(carrier, path: dict) -> None:
+    """Положить траекторию на носитель — рёбрами, с плоскостью её эскиза."""
+    place = _placement_of(path)
+    carrier.Shape = _path_wire(path, _into(place))
+    # Как и у профиля: положение ставится ПОСЛЕ формы.
+    carrier.Placement = place
+
+
+#: Способы ведения профиля: ключ протокола → `Mode` у `PartDesign::Pipe`.
+_PIPE_MODES = {"standard": "Standard", "fixed": "Fixed", "frenet": "Frenet"}
+#: Переход на изломе траектории → `Transition`.
+_PIPE_TRANSITIONS = {"transformed": "Transformed", "right": "Right corner",
+                     "round": "Round corner"}
+#: Чем задана спираль → `Mode` у `PartDesign::Helix`.
+_HELIX_MODES = {"pitch-height": "pitch-height-angle",
+                "pitch-turns": "pitch-turns-angle",
+                "height-turns": "height-turns-angle"}
+
+
 def _placement_of(profile: dict, start_offset: float = 0.0):
     """Положение носителя = плоскость эскиза, пришедшая от ProtoCAD.
 
@@ -1936,6 +2275,11 @@ def _meshes(shape, feature, preview: bool) -> dict:
     результат целиком лучше, чем не показать ничего, — и окно на это
     рассчитывает.
     """
+    if not preview:
+        # Готовой операции инструмент не нужен: окно показывает его только
+        # в предпросмотре. А считался он и здесь — два булевых вычитания и
+        # лишнее разбиение на КАЖДУЮ операцию при каждом пересчёте дерева.
+        return {"mesh": _mesh(shape), "toolMesh": None, "toolKind": ""}
     changed, kind = _change(_before_shape(feature), _feature_shape(feature))
     tool = changed if changed is not None else _tool_mesh(feature)
     if preview and tool is not None:
@@ -2130,8 +2474,44 @@ def _problems(feature) -> str:
     state = list(feature.State)
     if "Invalid" in state or "Error" in state or "Touched" in state:
         note = getattr(feature, "Error", "") or ""
+        if not note:
+            # Причину отказа FreeCAD держит в строке состояния объекта. Без
+            # неё человек видел «не пересчиталась: Touched, Invalid» — то
+            # есть что отказ есть, но не почему.
+            try:
+                status = str(feature.getStatusString() or "")
+            except Exception:  # noqa: BLE001 — у старых сборок её нет
+                status = ""
+            if status and status not in ("Valid", "Touched"):
+                note = _reason(status)
         return note or f"операция не пересчиталась: {state}"
     return ""
+
+
+#: Частые отказы FreeCAD — по-русски. Остальные показываются как есть, с
+#: пометкой, чьи это слова: перевод наугад хуже честного оригинала.
+_REASONS = {
+    "Result is self intersecting":
+        "результат пересекает сам себя — например, профиль задевает ось "
+        "или изгибы и витки налезают друг на друга",
+    "Sections need to have the same amount of wires or vertices as the base "
+    "section":
+        "у всех сечений должно быть столько же контуров, сколько у первого",
+    "Resulting shape is not a solid": "результат — не сплошное тело",
+    "Result has multiple solids":
+        "получилось несколько отдельных тел — операция должна давать одно",
+}
+
+
+def _reason(status: str) -> str:
+    text = status.strip()
+    if text.startswith("Error:"):
+        text = text[len("Error:"):].strip()
+    text = text.rstrip(".")
+    for known, russian in _REASONS.items():
+        if text.startswith(known):
+            return russian
+    return f"FreeCAD: {text}"
 
 
 def _revolved(item: dict):
@@ -2315,6 +2695,55 @@ def _points_inward(face, first, second, third, normal) -> bool:
     return normal.dot(surface) < 0.0
 
 
+#: Поверхности, у которых мелкое разбиение ограничено само собой: у
+#: плоскости угол не играет роли, у цилиндра и конуса густота растёт лишь
+#: в одну сторону, у сферы и тора — в обе, но на один оборот.
+_TAME_SURFACES = ("Plane", "Cylinder", "Cone", "Sphere", "Toroid")
+#: Сколько треугольников допустимо на одну грань свободной формы.
+_FACE_BUDGET = 8000
+#: Угловой прогиб штатного разбиения FreeCAD и грубого — для оценки, рад.
+_ANGLE_FINE, _ANGLE_COARSE = 0.1, 0.5
+
+
+def _triangulate(face, deflection: float):
+    """Узлы и треугольники грани: мелко, но не безмерно.
+
+    Штатное разбиение (`tessellate`) держит угловой прогиб 0.1 рад на любой
+    поверхности. Цилиндру это и нужно — 63 отрезка на окружность. Но
+    поверхность пружины в четыре витка поворачивается на 25 радиан, и та
+    же точность давала на ней сто тысяч треугольников: 3.5 с на разбиение
+    и столько же на перевод в текст — пятнадцать секунд на одну операцию.
+
+    Поэтому грань СВОБОДНОЙ ФОРМЫ сначала разбивается грубо (0.5 рад): это
+    дёшево и показывает, насколько она сложна. Мелкое разбиение гуще
+    грубого не больше чем в (0.5 / 0.1)² = 25 раз; если и так укладывается
+    в бюджет — берётся штатное, как у всех. Иначе угол подбирается под
+    бюджет. Обычные грани при этом разбиваются ровно как раньше.
+    """
+    surface = type(getattr(face, "Surface", None)).__name__
+    if surface in _TAME_SURFACES:
+        return face.tessellate(deflection)
+    try:
+        import MeshPart
+    except ImportError:  # сборка без модуля сеток — остаётся штатное
+        return face.tessellate(deflection)
+    # Копия, а не сама грань: разбиение запоминается в форме, и грубое,
+    # оставшись в грани тела, подменило бы собой следующее штатное.
+    coarse = MeshPart.meshFromShape(
+        Shape=face.copy(), LinearDeflection=deflection,
+        AngularDeflection=_ANGLE_COARSE, Relative=False).CountFacets
+    factor = (_ANGLE_COARSE / _ANGLE_FINE) ** 2
+    if coarse * factor <= _FACE_BUDGET:
+        return face.tessellate(deflection)
+    angle = min(_ANGLE_COARSE, max(
+        _ANGLE_FINE, _ANGLE_COARSE * math.sqrt(coarse / _FACE_BUDGET)))
+    mesh = MeshPart.meshFromShape(
+        Shape=face.copy(), LinearDeflection=deflection,
+        AngularDeflection=angle, Relative=False)
+    nodes, triangles = mesh.Topology
+    return nodes, triangles
+
+
 def _mesh(shape, deflection: float = 0.1) -> dict:
     """Треугольники детали с нормалями НАРУЖУ.
 
@@ -2329,7 +2758,7 @@ def _mesh(shape, deflection: float = 0.1) -> dict:
     """
     positions, normals, faces = [], [], []
     for index, face in enumerate(shape.Faces):
-        nodes, triangles = face.tessellate(deflection)
+        nodes, triangles = _triangulate(face, deflection)
         flip = None
         for a, b, c in triangles:
             first, second, third = nodes[a], nodes[b], nodes[c]
@@ -2567,6 +2996,9 @@ def main() -> int:
         "pad": engine.pad,
         "dress_up": engine.dress_up,
         "revolve": engine.revolve,
+        "sweep": engine.sweep,
+        "loft": engine.loft,
+        "helix": engine.helix,
         "hole": engine.hole,
         "draft": engine.draft,
         "shell": engine.shell,

@@ -360,6 +360,145 @@ class RevolveRequest:
         return cls(**data)
 
 
+#: Как профиль держится при протяжке. Значения — ключи протокола; что они
+#: значат у движка, решает движок.
+#:
+#: * ``standard`` — профиль поворачивается вслед за траекторией (обычный
+#:   случай, «по траектории»);
+#: * ``fixed`` — профиль не поворачивается, только переносится («нормаль
+#:   постоянна»);
+#: * ``frenet`` — по трёхграннику Френе: нужен винтовой траектории, иначе
+#:   профиль на ней заметно проворачивается.
+SWEEP_MODES = ("standard", "fixed", "frenet")
+#: Что делать на изломе траектории: ``transformed`` — вести профиль как
+#: есть, ``right`` — острый угол (срез по биссектрисе), ``round`` — скруглить.
+SWEEP_TRANSITIONS = ("transformed", "right", "round")
+#: Чем задана спираль: две величины из трёх (шаг, высота, число витков),
+#: третья выводится. Названия — пары, которые задаются.
+HELIX_MODES = ("pitch-height", "pitch-turns", "height-turns")
+
+
+@dataclass
+class SweepRequest:
+    """Протяжка профиля вдоль траектории («По траектории»).
+
+    Траектория приходит ТАКИМ ЖЕ профилем, как и сечение, — кривыми в
+    координатах детали вместе со своей плоскостью. Она берётся из
+    незамкнутых цепочек (``chains``) либо, если траектория замкнута, из
+    наружной петли области. Цепочка должна быть ОДНА: из двух разных
+    линий траектории не получается, и выбирать одну из них за человека
+    нельзя.
+    """
+
+    document_id: str
+    body_id: str
+    profile: "Profile" = field(default_factory=lambda: Profile())
+    path: "Profile" = field(default_factory=lambda: Profile())
+    mode: str = "standard"
+    transition: str = "transformed"
+    #: Прибавить к телу или снять с него — как у выдавливания.
+    subtract: bool = False
+    preview: bool = False
+    feature_id: str = ""
+    revision: int = 0
+    session_id: str = ""
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["profile"] = self.profile.to_dict()
+        data["path"] = self.path.to_dict()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SweepRequest":
+        data = dict(data)
+        data["profile"] = Profile.from_dict(data.get("profile"))
+        data["path"] = Profile.from_dict(data.get("path"))
+        return cls(**data)
+
+
+@dataclass
+class LoftRequest:
+    """Тело по сечениям («По сечениям»).
+
+    ``profile`` — первое сечение, ``sections`` — следующие по порядку.
+    Порядок задаёт человек: тело идёт от сечения к сечению ровно в том
+    порядке, в каком их указали, и переставлять их молча нельзя.
+    """
+
+    document_id: str
+    body_id: str
+    profile: "Profile" = field(default_factory=lambda: Profile())
+    sections: list = field(default_factory=list)      # [Profile, ...]
+    #: Прямые грани между сечениями вместо плавных.
+    ruled: bool = False
+    #: Замкнуть: последнее сечение соединяется с первым (кольцо).
+    closed: bool = False
+    subtract: bool = False
+    preview: bool = False
+    feature_id: str = ""
+    revision: int = 0
+    session_id: str = ""
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["profile"] = self.profile.to_dict()
+        data["sections"] = [item.to_dict() for item in self.sections]
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LoftRequest":
+        data = dict(data)
+        data["profile"] = Profile.from_dict(data.get("profile"))
+        data["sections"] = [Profile.from_dict(item)
+                            for item in (data.get("sections") or ())]
+        return cls(**data)
+
+
+@dataclass
+class HelixRequest:
+    """Профиль, протянутый по винтовой линии вокруг оси («Спираль»).
+
+    Ось — числами, как у вращения: направление и точка в координатах
+    детали. Из шага, высоты и числа витков задаются два (``mode``), третье
+    выводится.
+    """
+
+    document_id: str
+    body_id: str
+    profile: "Profile" = field(default_factory=lambda: Profile())
+    axis: tuple = (0.0, 0.0, 1.0)
+    axis_origin: tuple = (0.0, 0.0, 0.0)
+    mode: str = "pitch-height"
+    pitch: float = 5.0
+    height: float = 20.0
+    turns: float = 4.0
+    #: Конусность, градусы: ноль — цилиндрическая спираль.
+    angle_deg: float = 0.0
+    #: Левая навивка. По умолчанию правая — как у обычной резьбы.
+    left_handed: bool = False
+    #: Навивать в обратную сторону по оси.
+    reversed: bool = False
+    subtract: bool = False
+    preview: bool = False
+    feature_id: str = ""
+    revision: int = 0
+    session_id: str = ""
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["profile"] = self.profile.to_dict()
+        data["axis"] = list(self.axis)
+        data["axis_origin"] = list(self.axis_origin)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HelixRequest":
+        data = dict(data)
+        data["profile"] = Profile.from_dict(data.get("profile"))
+        return cls(**data)
+
+
 @dataclass
 class HoleRequest:
     """Отверстие по эскизу: положения берутся из окружностей профиля.

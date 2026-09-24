@@ -489,6 +489,77 @@ def _revolve(c: _Canvas):
     c.arc(0.5, 0.5, 0.3, 200, 140)
 
 
+def _oval_arc(c: _Canvas, cx, cy, rx, ry, start_deg, sweep_deg):
+    """Дуга эллипса: виток пружины сбоку — это сплющенная окружность."""
+    rect = QtCore.QRectF(c._p(cx - rx, cy - ry),
+                         QtCore.QSizeF(2 * rx * c.unit, 2 * ry * c.unit))
+    c.painter.drawArc(rect, int(start_deg * 16), int(sweep_deg * 16))
+
+
+def _sweep_path(c: _Canvas):
+    """Траектория: вверх, дугой поворот, вправо."""
+    c.line(0.2, 0.86, 0.2, 0.48)
+    c.arc(0.46, 0.48, 0.26, 180, -90)
+    c.line(0.46, 0.22, 0.9, 0.22)
+
+
+def _sweep(c: _Canvas):
+    """По траектории: профиль в начале, траектория и стрелка в конце."""
+    c.stroke(GHOST, 1.2, dashed=True)
+    _sweep_path(c)
+    c.stroke()
+    c.circle(0.2, 0.8, 0.11)
+    c.stroke(ACCENT, 1.3)
+    c.arrow(0.62, 0.22, 0.9, 0.22, 0.08)
+
+
+def _sweep_cut(c: _Canvas):
+    """Вырез по траектории: брусок и канавка, идущая по нему дугой."""
+    c.stroke()
+    c.polyline([(0.1, 0.84), (0.1, 0.4), (0.9, 0.4), (0.9, 0.84)], closed=True)
+    c.stroke(ACCENT, 1.4)
+    c.arc(0.5, 0.4, 0.26, 180, 180)
+    c.circle(0.24, 0.4, 0.06)
+
+
+def _loft(c: _Canvas):
+    """По сечениям: квадрат внизу, круг вверху и переходы между ними."""
+    c.stroke()
+    c.polyline([(0.12, 0.8), (0.6, 0.8), (0.88, 0.64), (0.4, 0.64)], closed=True)
+    c.circle(0.5, 0.26, 0.14)
+    c.stroke(GHOST, 1.1, dashed=True)
+    c.line(0.12, 0.8, 0.36, 0.28)
+    c.line(0.88, 0.64, 0.64, 0.24)
+
+
+def _loft_cut(c: _Canvas):
+    """Вырез по сечениям: брусок и сужающаяся воронка в нём."""
+    c.stroke()
+    c.polyline([(0.1, 0.84), (0.1, 0.3), (0.9, 0.3), (0.9, 0.84)], closed=True)
+    c.stroke(ACCENT, 1.4)
+    c.polyline([(0.28, 0.3), (0.42, 0.66), (0.58, 0.66), (0.72, 0.3)])
+
+
+def _helix(c: _Canvas):
+    """Спираль: ось и витки — задняя половина бледнее передней."""
+    c.stroke(ACCENT, 1.1, dashed=True)
+    c.line(0.5, 0.06, 0.5, 0.94)
+    for y in (0.26, 0.46, 0.66):
+        c.stroke(GHOST, 1.2)
+        _oval_arc(c, 0.5, y, 0.32, 0.09, 0, 180)
+        c.stroke()
+        _oval_arc(c, 0.5, y + 0.1, 0.32, 0.09, 180, 180)
+
+
+def _helix_cut(c: _Canvas):
+    """Вырез по спирали: вал и косые витки резьбы на нём."""
+    c.stroke()
+    c.polyline([(0.3, 0.1), (0.7, 0.1), (0.7, 0.9), (0.3, 0.9)], closed=True)
+    c.stroke(ACCENT, 1.4)
+    for y in (0.3, 0.5, 0.7):
+        c.line(0.3, y + 0.07, 0.7, y - 0.07)
+
+
 def _hole(c: _Canvas):
     c.stroke()
     c.polyline([(0.14, 0.7), (0.14, 0.3), (0.86, 0.3), (0.86, 0.7)], closed=True)
@@ -1008,6 +1079,12 @@ GLYPHS = {
     "pad": _pad,
     "pocket": _pocket,
     "revolve": _revolve,
+    "sweep": _sweep,
+    "sweep_cut": _sweep_cut,
+    "loft": _loft,
+    "loft_cut": _loft_cut,
+    "helix": _helix,
+    "helix_cut": _helix_cut,
     "hole": _hole,
     "shell": _shell,
     "draft": _draft,

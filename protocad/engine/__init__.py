@@ -27,8 +27,11 @@ from .protocol import (  # noqa: F401
     PROTOCOL,
     DraftRequest,
     DressUpRequest,
+    HELIX_MODES,
+    HelixRequest,
     HoleRequest,
     HoleToolRequest,
+    LoftRequest,
     PatternRequest,
     Profile,
     Capabilities,
@@ -43,6 +46,9 @@ from .protocol import (  # noqa: F401
     SectionResult,
     ShellRequest,
     Status,
+    SWEEP_MODES,
+    SWEEP_TRANSITIONS,
+    SweepRequest,
     ThinType,
     error,
 )
@@ -95,6 +101,18 @@ class Backend:
 
     def pattern(self, request) -> FeatureResult:
         """Массив операций: линейный, круговой или зеркало."""
+        raise NotImplementedError
+
+    def sweep(self, request) -> FeatureResult:
+        """Протяжка профиля вдоль траектории — прилив или вырез."""
+        raise NotImplementedError
+
+    def loft(self, request) -> FeatureResult:
+        """Тело по сечениям — прилив или вырез."""
+        raise NotImplementedError
+
+    def helix(self, request) -> FeatureResult:
+        """Профиль по винтовой линии вокруг оси — прилив или вырез."""
         raise NotImplementedError
 
     def export(self, document_id: str, path, body_id: str = "") -> FeatureResult:

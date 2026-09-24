@@ -180,6 +180,15 @@ class FreeCADBackend:
     def pattern(self, request) -> FeatureResult:
         return self._operation("pattern", request)
 
+    def sweep(self, request) -> FeatureResult:
+        return self._operation("sweep", request)
+
+    def loft(self, request) -> FeatureResult:
+        return self._operation("loft", request)
+
+    def helix(self, request) -> FeatureResult:
+        return self._operation("helix", request)
+
     def _operation(self, command: str, request) -> FeatureResult:
         """Любая операция детали. Разница между ними — только в имени и
         полях запроса; всё остальное одинаково, и разводить это по методам

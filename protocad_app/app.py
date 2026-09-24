@@ -591,7 +591,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree.setHeaderLabels(["Дерево построения", "Состояние"])
         self.tree.setColumnWidth(0, 210)
         self.tree.rollback_moved.connect(self._move_rollback)
+        #: Строка, только что ставшая текущей, и когда. Нужна, чтобы щелчок,
+        #: который её и сделал текущей, не разбирался второй раз.
+        self._tree_fresh = (None, 0.0)
         self.tree.currentItemChanged.connect(self._feature_selected)
+        self.tree.itemClicked.connect(self._tree_clicked)
         self.tree.itemDoubleClicked.connect(self._edit_feature)
         self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
@@ -1661,8 +1665,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Поле ждёт не эскиз — щелчок ему не адресован, и трогать
             # набранное нельзя (§47: несовместимое не сбрасывает выбор).
             return False
-        result = self.session.click(
-            Pick("sketch", 0, sketch.name, sketch))
+        result = self.session.click(D.sketch_pick(sketch))
         if result == "rejected":
             self.status.showMessage(self.session.diagnostics, 5000)
             return True
@@ -1961,6 +1964,12 @@ class MainWindow(QtWidgets.QMainWindow):
         "Отверстие": "hole", "Массив отверстий": "pattern_linear",
         "Скругление": "fillet", "Фаска": "chamfer", "Вращение": "revolve",
         "Зеркало": "mirror_body", "Оболочка": "shell", "Уклон": "draft",
+        "Вырез": "pocket", "Вырез вращением": "revolve",
+        "Линейный массив": "linear_pattern",
+        "Круговой массив": "circular_pattern",
+        "По траектории": "sweep", "Вырез по траектории": "sweep_cut",
+        "По сечениям": "loft", "Вырез по сечениям": "loft_cut",
+        "Спираль": "helix", "Вырез по спирали": "helix_cut",
     }
 
     #: Как в дереве помечен эскиз. Операции хранятся по имени, эскизы —
@@ -1998,8 +2007,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 node.setForeground(0, grey)
                 node.setForeground(1, grey)
                 node.setText(1, "откачено")
-            if operation.sketch is not None:
-                node.addChild(self._sketch_node(operation.sketch))
+            # Все эскизы операции: профиль, траектория, сечения. Забытая
+            # траектория пропала бы из дерева вовсе — свободной она не
+            # числится, а под операцией её бы не было.
+            for role, sketch in self._sketch_roles(operation):
+                node.addChild(self._sketch_node(sketch, role))
                 node.setExpanded(True)
             root.addChild(node)
         if built >= len(self.document.operations):
@@ -2103,11 +2115,26 @@ class MainWindow(QtWidgets.QMainWindow):
             node.setToolTip(1, row["note"])
         return node
 
-    def _sketch_node(self, sketch) -> QtWidgets.QTreeWidgetItem:
+    @staticmethod
+    def _sketch_roles(operation) -> list:
+        """(подпись, эскиз) для каждого эскиза операции — по порядку."""
+        found = []
+        if operation.sketch is not None:
+            first = ("Сечение 1" if operation.kind in ("loft", "loft_cut")
+                     else "Эскиз")
+            found.append((first, operation.sketch))
+        if operation.path is not None:
+            found.append(("Траектория", operation.path))
+        for number, sketch in enumerate(operation.sections, start=2):
+            if sketch is not None:
+                found.append((f"Сечение {number}", sketch))
+        return found
+
+    def _sketch_node(self, sketch, role: str = "Эскиз") -> QtWidgets.QTreeWidgetItem:
         # Плоскость видна прямо в дереве: без неё два одинаковых с виду
         # эскиза различить нельзя, а строят они разное.
         node = QtWidgets.QTreeWidgetItem(
-            [f"Эскиз: {sketch.name}  [{sketch.plane.name}]", ""])
+            [f"{role}: {sketch.name}  [{sketch.plane.name}]", ""])
         node.setIcon(0, icons.icon("sketch", 16))
         node.setData(0, QtCore.Qt.UserRole, self.SKETCH_MARK + sketch.name)
         return node
@@ -2118,7 +2145,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 return sketch
         return None
 
+    def _tree_clicked(self, item, _column) -> None:
+        """Щелчок по строке, которая УЖЕ текущая.
+
+        Смена текущей строки такого щелчка не видит, и эскиз, щёлкнутый
+        второй раз, чтобы снять его с поля команды, не снимался: в поле
+        сечений лишнее сечение было не убрать. Щелчок, который строку
+        только что сделал текущей, уже разобран — его пропускаем.
+        """
+        fresh, when = self._tree_fresh
+        self._tree_fresh = (None, 0.0)
+        if fresh is item and time.monotonic() - when < 3.0:
+            return
+        if self.session is None:
+            return
+        name = item.data(0, QtCore.Qt.UserRole)
+        if not name or not name.startswith(self.SKETCH_MARK):
+            return
+        sketch = self._sketch_named(name[len(self.SKETCH_MARK):])
+        if sketch is not None:
+            self._sketch_to_session(sketch, name)
+
     def _feature_selected(self, current, _previous) -> None:
+        self._tree_fresh = (current, time.monotonic())
         if current is None:
             return
         name = current.data(0, QtCore.Qt.UserRole)
@@ -2367,10 +2416,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_direction_arrow()
         self._sync_pick_kinds()
         self._update_preview()
+        # Эскиз в трёхмерном виде не выбирается — только в дереве. Команда,
+        # которая ждёт эскизы, обязана об этом сказать, иначе человек
+        # щёлкает по виду и не понимает, почему ничего не происходит.
+        sketches_only = any(box.accepts == ("sketch",)
+                            for box in descriptor.all_boxes())
+        where = ("Эскизы указывайте щелчком в дереве слева"
+                 if sketches_only else "Укажите объекты в виде")
         self.hint.setText(
             f"Правка «{editing.name}»: измените параметры; Готово — применить"
             if editing is not None else
-            "Укажите объекты в виде и задайте параметры; Готово — создать"
+            f"{where} и задайте параметры; Готово — создать"
         )
 
     def _new_plane(self) -> None:
@@ -2388,8 +2444,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if "sketch" in descriptor.preselection:
             sketch = self._free_sketch()
             if sketch is not None:
-                picks.append(Pick("sketch", id(sketch) % 100000, sketch.name,
-                                  sketch))
+                picks.append(D.sketch_pick(sketch))
                 # Области, выбранные в самом эскизе, — это тот же выбор.
                 # Не подставить их значило бы попросить человека повторить
                 # уже сделанное, а забыть — построить не то.
@@ -2745,7 +2800,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.decor.update()
             return
         sketch = self._command_sketch()
-        if sketch is None:
+        # Стрелка — это направление ВЫДАВЛИВАНИЯ. У протяжки, сечений и
+        # спирали направление задают траектория, сечения и ось, и стрелка
+        # по нормали эскиза показывала бы то, чего операция не делает.
+        extrudes = any(item.key == "end_condition"
+                       for item in session.descriptor.all_parameters())
+        if sketch is None or not extrudes:
             self.decor.update()
             return
         plane = sketch.plane
@@ -2879,7 +2939,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 and not operation.pattern \
                 and operation.kind not in ("shell", "draft"):
             raise CommandError("нет свободного эскиза для профиля")
-        answer = self.document.preview(operation)
+        if self.editing is not None:
+            # Правка показывается на месте, со всем, что ниже по дереву:
+            # поверх готовой детали новый вариант лёг бы на старый.
+            answer = self.document.preview_edit(operation, self.editing)
+        else:
+            answer = self.document.preview(operation)
         if not answer.ok:
             raise CommandError(answer.message)
         return answer
@@ -2940,6 +3005,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decor.update()
         self._show_command_panel(False)
         self.viewport.pick_kinds = ("vertex", "edge", "face", "body")
+        # Подсказка была о команде; команды больше нет.
+        self.hint.setText("")
         report = self._rebuild(force=True)
         if report is not None and not report.ok:
             # Отказ уже показан пересчётом. Печатать поверх него «Изменено»
@@ -3072,7 +3139,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if sketch is None:
                 return
             owner = next((item for item in self.document.operations
-                          if item.sketch is sketch), None)
+                          if any(one is sketch for one in item.all_sketches)),
+                         None)
             self._enter_sketch(sketch, owner)
             return
         operation = self.document.by_name(name)

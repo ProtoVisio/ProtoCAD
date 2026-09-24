@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .protocol import Diagnostic, FeatureResult, PadRequest, Status, error
+from .protocol import (HELIX_MODES, SWEEP_MODES, SWEEP_TRANSITIONS,
+                       Diagnostic, FeatureResult, PadRequest, Status, error)
 
 #: Насколько должен измениться объём, чтобы операция считалась
 #: состоявшейся, мм³. Не ноль: булева операция оставляет крохи на стыке
@@ -258,6 +259,73 @@ class Policy:
             self.backend.pattern, request, ["count", "spacing", "features"],
             f"{request.body_id}: форма не изменилась — копии легли туда же, "
             f"где уже есть материал, либо мимо детали")
+
+    def sweep(self, request) -> FeatureResult:
+        """Протяжка. Разворачивать нечего: сторону задаёт траектория."""
+        if request.path.empty:
+            return error("NO_PATH",
+                         f"{request.body_id}: траектория не задана",
+                         ["path"], self.name)
+        if request.mode not in SWEEP_MODES:
+            return error("BAD_MODE",
+                         f"{request.body_id}: неизвестный способ ведения "
+                         f"профиля {request.mode!r}", ["mode"], self.name)
+        if request.transition not in SWEEP_TRANSITIONS:
+            return error("BAD_TRANSITION",
+                         f"{request.body_id}: неизвестный переход на изломе "
+                         f"{request.transition!r}", ["transition"], self.name)
+        return self._guarded(
+            self.backend.sweep, request, ["path", "profile"],
+            self._nothing(request, "проверьте, где лежит профиль "
+                                   "относительно траектории"))
+
+    def loft(self, request) -> FeatureResult:
+        if not request.sections:
+            return error("NO_SECTIONS",
+                         f"{request.body_id}: нужно хотя бы два сечения — "
+                         f"укажите ещё одно", ["sections"], self.name)
+        if any(item.empty for item in request.sections):
+            return error("EMPTY_SECTION",
+                         f"{request.body_id}: одно из сечений пустое — в его "
+                         f"эскизе нет замкнутого контура", ["sections"],
+                         self.name)
+        return self._guarded(
+            self.backend.loft, request, ["sections", "profile"],
+            self._nothing(request, "проверьте сечения"))
+
+    def helix(self, request) -> FeatureResult:
+        if request.mode not in HELIX_MODES:
+            return error("BAD_MODE",
+                         f"{request.body_id}: неизвестный способ задать "
+                         f"спираль {request.mode!r}", ["mode"], self.name)
+        # Проверяются только те величины, что задаются: выведенную считает
+        # движок, и её значение в запросе ничего не значит.
+        given = {"pitch-height": ("pitch", "height"),
+                 "pitch-turns": ("pitch", "turns"),
+                 "height-turns": ("height", "turns")}[request.mode]
+        names = {"pitch": "шаг должен", "height": "высота должна",
+                 "turns": "число витков должно"}
+        for key in given:
+            if float(getattr(request, key)) <= 0.0:
+                return error("BAD_" + key.upper(),
+                             f"{request.body_id}: {names[key]} быть больше "
+                             f"нуля", [key], self.name)
+        if abs(request.angle_deg) >= 89.0:
+            return error("BAD_ANGLE",
+                         f"{request.body_id}: угол конуса должен быть меньше "
+                         f"89°", ["angle_deg"], self.name)
+        return self._guarded(
+            self.backend.helix, request, ["pitch", "height", "turns", "axis"],
+            self._nothing(request, "проверьте ось, шаг и высоту"))
+
+    @staticmethod
+    def _nothing(request, advice: str) -> str:
+        """Жалоба «ничего не произошло» — своя у прилива и у выреза."""
+        if request.subtract:
+            return (f"{request.body_id}: ничего не снято — инструмент не "
+                    f"задевает деталь; {advice}")
+        return (f"{request.body_id}: ничего не добавлено — тело вышло пустым "
+                f"либо целиком внутри детали; {advice}")
 
     def _guarded(self, run, request, arguments, complaint: str) -> FeatureResult:
         """Операция под правилом «ничего не произошло — это отказ».

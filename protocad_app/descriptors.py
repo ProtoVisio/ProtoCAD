@@ -2045,9 +2045,298 @@ HOLE_FEATURE = CommandDescriptor(
 )
 
 
+# --- По траектории, по сечениям, спираль ------------------------------------
+#
+# Все три строит FreeCAD (`PartDesign::Pipe`, `Loft`, `Helix`). Эскизы
+# указываются ЩЕЛЧКОМ В ДЕРЕВЕ: в трёхмерном виде эскиз не выбирается.
+# Вырез — та же команда с другим ключом: у движка это одна операция с
+# другим знаком, и панели у них одинаковые.
+
+
+def sketch_pick(sketch):
+    """Эскиз как выбор в поле — с номером, который у эскиза СВОЙ.
+
+    Равенство выбора — по виду и номеру. Пока у всех эскизов номер был
+    один и тот же, второй эскиз в поле сечений считался «тем же самым» и
+    снимал первый вместо того, чтобы встать за ним.
+    """
+    from command_session import Pick
+
+    return Pick("sketch", id(sketch), getattr(sketch, "name", "Эскиз"), sketch)
+
+
+def _sketch_box(box_id: str, label: str, many: bool = False) -> SelectionBox:
+    return SelectionBox(box_id, label, accepts=("sketch",), minimum=1,
+                        maximum=None if many else 1, ordered=many,
+                        auto_advance=not many)
+
+
+def _sketches_in(session, box_id: str) -> list:
+    from protocad.sketch import Sketch
+
+    box = session.box(box_id)
+    return [pick.data for pick in (box.items if box else ())
+            if isinstance(pick.data, Sketch)]
+
+
+def _merge_group() -> Group:
+    return Group("Область действия", parameters=[
+        Parameter("merge_result", "Объединить результаты", "flag", True),
+        Parameter("scope", "Строить в теле", "choice", SCOPE_AUTO,
+                  choices=_scope_choices, visible_when=_many_bodies),
+    ])
+
+
+def _load_scope(session, operation) -> None:
+    session.set_value("merge_result", operation.merge)
+    session.set_value("scope", operation.scope or SCOPE_AUTO)
+
+
+#: Ориентация профиля: подпись → ключ протокола.
+SWEEP_ORIENTATIONS = {"По траектории": "standard",
+                      "Постоянная нормаль": "fixed",
+                      "По винтовой (Френе)": "frenet"}
+#: Что делать на изломе траектории: подпись → ключ протокола.
+SWEEP_CORNERS = {"Как есть": "transformed", "Острый угол": "right",
+                 "Скругление": "round"}
+
+
+def _title_of(table: dict, key: str) -> str:
+    for title, value in table.items():
+        if value == key:
+            return title
+    return next(iter(table))
+
+
+def _check_sweep(session, context) -> Validation | None:
+    profile = _sketches_in(session, "profile")
+    path = _sketches_in(session, "path")
+    if profile and path and profile[0] is path[0]:
+        return Validation("semantic", False,
+                          "Профиль и траектория — один и тот же эскиз: "
+                          "траекторию рисуют отдельным эскизом", "path")
+    return None
+
+
+def _sweep(kind: str, title: str):
+    def build(session, context: BuildContext):
+        path = _sketches_in(session, "path")
+        return Operation(
+            kind, context.unique_name(title),
+            sketch=_picked_sketch(session),
+            path=path[0] if path else None,
+            sweep_mode=SWEEP_ORIENTATIONS.get(session.value("orientation"),
+                                              "standard"),
+            transition=SWEEP_CORNERS.get(session.value("corner"),
+                                         "transformed"),
+            merge=bool(session.value("merge_result", True)),
+            scope=_scope_of(session),
+        )
+    return build
+
+
+def _load_sweep(session, operation, context: BuildContext) -> None:
+    if operation.sketch is not None:
+        put(session, "profile", [sketch_pick(operation.sketch)])
+    if operation.path is not None:
+        put(session, "path", [sketch_pick(operation.path)])
+    session.set_value("orientation",
+                      _title_of(SWEEP_ORIENTATIONS, operation.sweep_mode))
+    session.set_value("corner", _title_of(SWEEP_CORNERS, operation.transition))
+    _load_scope(session, operation)
+
+
+def _sweep_descriptor(key: str, title: str, needs_body: bool) -> CommandDescriptor:
+    return CommandDescriptor(
+        key=key,
+        title=title,
+        preselection=("sketch",),
+        needs_body=needs_body,
+        groups=[
+            Group("Профиль и траектория", boxes=[
+                _sketch_box("profile", "Профиль"),
+                _sketch_box("path", "Траектория"),
+            ]),
+            Group("Параметры", parameters=[
+                Parameter("orientation", "Профиль идёт", "choice",
+                          "По траектории", choices=tuple(SWEEP_ORIENTATIONS)),
+                Parameter("corner", "На изломе траектории", "choice",
+                          "Как есть", choices=tuple(SWEEP_CORNERS)),
+            ]),
+            _merge_group(),
+        ],
+        build=_sweep(key, title),
+        check=_check_sweep,
+        load=_load_sweep,
+    )
+
+
+SWEEP = _sweep_descriptor("sweep", "По траектории", needs_body=False)
+SWEEP_CUT = _sweep_descriptor("sweep_cut", "Вырез по траектории", needs_body=True)
+
+
+def _check_loft(session, context) -> Validation | None:
+    profile = _sketches_in(session, "profile")
+    sections = _sketches_in(session, "sections")
+    if profile and any(item is profile[0] for item in sections):
+        return Validation("semantic", False,
+                          "Первое сечение указано ещё раз среди следующих",
+                          "sections")
+    if len({id(item) for item in sections}) != len(sections):
+        return Validation("semantic", False,
+                          "Одно и то же сечение указано дважды", "sections")
+    return None
+
+
+def _loft(kind: str, title: str):
+    def build(session, context: BuildContext):
+        return Operation(
+            kind, context.unique_name(title),
+            sketch=_picked_sketch(session),
+            sections=_sketches_in(session, "sections"),
+            ruled=bool(session.value("ruled")),
+            closed=bool(session.value("closed")),
+            merge=bool(session.value("merge_result", True)),
+            scope=_scope_of(session),
+        )
+    return build
+
+
+def _load_loft(session, operation, context: BuildContext) -> None:
+    if operation.sketch is not None:
+        put(session, "profile", [sketch_pick(operation.sketch)])
+    put(session, "sections", [sketch_pick(item) for item in operation.sections
+                              if item is not None])
+    session.set_value("ruled", operation.ruled)
+    session.set_value("closed", operation.closed)
+    _load_scope(session, operation)
+
+
+def _loft_descriptor(key: str, title: str, needs_body: bool) -> CommandDescriptor:
+    return CommandDescriptor(
+        key=key,
+        title=title,
+        # Без предвыбора: порядок сечений задаёт человек, а последний
+        # нарисованный эскиз обычно ВЕРХНИЙ — взятый первым, он перекрутил
+        # бы тело.
+        preselection=(),
+        needs_body=needs_body,
+        groups=[
+            Group("Сечения", boxes=[
+                _sketch_box("profile", "Первое сечение"),
+                # По порядку: тело идёт от сечения к сечению так, как их
+                # указали. Повторный щелчок по эскизу снимает его.
+                _sketch_box("sections", "Следующие сечения", many=True),
+            ]),
+            Group("Параметры", parameters=[
+                Parameter("ruled", "Прямые переходы", "flag", False),
+                Parameter("closed", "Замкнуть в кольцо", "flag", False),
+            ]),
+            _merge_group(),
+        ],
+        build=_loft(key, title),
+        check=_check_loft,
+        load=_load_loft,
+    )
+
+
+LOFT = _loft_descriptor("loft", "По сечениям", needs_body=False)
+LOFT_CUT = _loft_descriptor("loft_cut", "Вырез по сечениям", needs_body=True)
+
+
+#: Чем задана спираль: подпись → ключ протокола.
+HELIX_SETS = {"Шаг и высота": "pitch-height", "Шаг и витки": "pitch-turns",
+              "Высота и витки": "height-turns"}
+
+
+def _helix_uses(what: str):
+    def shown(session) -> bool:
+        mode = HELIX_SETS.get(session.value("helix_mode"), "pitch-height")
+        return what in mode
+    return shown
+
+
+def _helix(kind: str, title: str):
+    def build(session, context: BuildContext):
+        from commands import AXES as AXIS_TABLE
+
+        return Operation(
+            kind, context.unique_name(title),
+            sketch=_picked_sketch(session),
+            axis=AXIS_TABLE.get(session.value("axis"), AXIS_TABLE["Z"]),
+            axis_origin=(0.0, 0.0, 0.0),
+            helix_mode=HELIX_SETS.get(session.value("helix_mode"),
+                                      "pitch-height"),
+            pitch=float(session.value("pitch") or 0.0),
+            height=float(session.value("height") or 0.0),
+            turns=float(session.value("turns") or 0.0),
+            taper=float(session.value("taper") or 0.0),
+            left_handed=bool(session.value("left_handed")),
+            reversed=bool(session.value("reverse")),
+            merge=bool(session.value("merge_result", True)),
+            scope=_scope_of(session),
+        )
+    return build
+
+
+def _load_helix(session, operation, context: BuildContext) -> None:
+    from commands import AXES as AXIS_TABLE
+
+    if operation.sketch is not None:
+        put(session, "profile", [sketch_pick(operation.sketch)])
+    session.set_value("axis", _named_axis(operation.axis, AXIS_TABLE, "Z"))
+    session.set_value("helix_mode", _title_of(HELIX_SETS, operation.helix_mode))
+    session.set_value("pitch", operation.pitch)
+    session.set_value("height", operation.height)
+    session.set_value("turns", operation.turns)
+    session.set_value("taper", operation.taper)
+    session.set_value("left_handed", operation.left_handed)
+    session.set_value("reverse", operation.reversed)
+    _load_scope(session, operation)
+
+
+def _helix_descriptor(key: str, title: str, needs_body: bool) -> CommandDescriptor:
+    return CommandDescriptor(
+        key=key,
+        title=title,
+        preselection=("sketch",),
+        needs_body=needs_body,
+        groups=[
+            Group("Профиль", boxes=[_sketch_box("profile", "Профиль")]),
+            Group("Ось", parameters=[
+                # Ось проходит через начало координат детали, как у
+                # вращения: профиль рисуют в плоскости, содержащей ось.
+                Parameter("axis", "Ось", "choice", "Z", choices=AXES),
+                Parameter("reverse", "Обратное направление", "flag", False),
+            ]),
+            Group("Спираль", parameters=[
+                Parameter("helix_mode", "Задать", "choice", "Шаг и высота",
+                          choices=tuple(HELIX_SETS)),
+                Parameter("pitch", "Шаг", "number", 5.0, 0.01, 1e5, 3,
+                          suffix=" мм", visible_when=_helix_uses("pitch")),
+                Parameter("height", "Высота", "number", 20.0, 0.01, 1e5, 3,
+                          suffix=" мм", visible_when=_helix_uses("height")),
+                Parameter("turns", "Витков", "number", 4.0, 0.01, 1e4, 2,
+                          visible_when=_helix_uses("turns")),
+                Parameter("taper", "Угол конуса", "number", 0.0, -80.0, 80.0,
+                          2, suffix=" °"),
+                Parameter("left_handed", "Левая навивка", "flag", False),
+            ]),
+            _merge_group(),
+        ],
+        build=_helix(key, title),
+        load=_load_helix,
+    )
+
+
+HELIX = _helix_descriptor("helix", "Спираль", needs_body=False)
+HELIX_CUT = _helix_descriptor("helix_cut", "Вырез по спирали", needs_body=True)
+
+
 DESCRIPTORS = (
     PAD, CUT, REVOLVE, FILLET, CHAMFER, DRAFT, SHELL, HOLE, HOLE_PATTERN,
     MIRROR, LINEAR_PATTERN, CIRCULAR_PATTERN, PLANE, HOLE_FEATURE,
+    SWEEP, SWEEP_CUT, LOFT, LOFT_CUT, HELIX, HELIX_CUT,
 )
 
 BY_KEY = {descriptor.key: descriptor for descriptor in DESCRIPTORS}

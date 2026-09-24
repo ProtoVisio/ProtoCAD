@@ -27,7 +27,9 @@ from .engine import (
     DressUpRequest,
     EndCondition,
     FeatureResult,
+    HelixRequest,
     HoleRequest,
+    LoftRequest,
     PadRequest,
     PatternRequest,
     DraftRequest,
@@ -35,6 +37,7 @@ from .engine import (
     RevolveRequest,
     SectionRequest,
     ShellRequest,
+    SweepRequest,
     ThinType,
 )
 
@@ -48,12 +51,18 @@ TITLES = {"pad": "Выдавливание", "pocket": "Вырез",
           "revolve": "Вращение", "groove": "Вырез вращением",
           "hole": "Отверстие", "shell": "Оболочка", "draft": "Уклон",
           "linear": "Линейный массив", "polar": "Круговой массив",
-          "mirror": "Зеркало"}
+          "mirror": "Зеркало",
+          "sweep": "По траектории", "sweep_cut": "Вырез по траектории",
+          "loft": "По сечениям", "loft_cut": "Вырез по сечениям",
+          "helix": "Спираль", "helix_cut": "Вырез по спирали"}
 
 #: Операции по рёбрам, а не по эскизу. Эскиза у них нет вовсе.
 DRESS_UPS = ("fillet", "chamfer")
 #: Операции по профилю эскиза.
-BY_PROFILE = ("pad", "pocket", "revolve", "groove", "hole")
+BY_PROFILE = ("pad", "pocket", "revolve", "groove", "hole",
+              "sweep", "sweep_cut", "loft", "loft_cut", "helix", "helix_cut")
+#: Операции, снимающие материал. Остальные по профилю — прибавляют.
+SUBTRACTIVE = ("pocket", "groove", "sweep_cut", "loft_cut", "helix_cut")
 #: Массивы: размножают другие операции, а не строят новую геометрию.
 PATTERNS = {"linear": "linear", "polar": "polar", "mirror": "mirror"}
 
@@ -180,6 +189,26 @@ class Operation:
     #: нормаль один раз, зеркало осталось бы там, где плоскость была
     #: когда-то, — и разошлось бы с ней при первой же правке размера.
     plane_name: str = ""
+    #: ПРОТЯЖКА: эскиз траектории. Профиль — обычный ``sketch``.
+    path: object = None
+    #: Как вести профиль вдоль траектории и что делать на изломе (ключи
+    #: протокола: ``SWEEP_MODES``, ``SWEEP_TRANSITIONS``).
+    sweep_mode: str = "standard"
+    transition: str = "transformed"
+    #: ПО СЕЧЕНИЯМ: эскизы сечений ПОСЛЕ первого, по порядку. Первое —
+    #: обычный ``sketch``: так у операции, как и у всех по профилю, есть
+    #: «свой» эскиз, и дерево показывает его первым.
+    sections: list = field(default_factory=list)
+    #: Прямые грани между сечениями; замкнуть последнее на первое.
+    ruled: bool = False
+    closed: bool = False
+    #: СПИРАЛЬ: чем задана (``HELIX_MODES``), шаг, высота, витки и левая
+    #: навивка. Ось — общие ``axis``/``axis_origin``, конусность — ``taper``.
+    helix_mode: str = "pitch-height"
+    pitch: float = 5.0
+    height: float = 20.0
+    turns: float = 4.0
+    left_handed: bool = False
     #: Имя операции в движке. Пусто — ещё не строилась.
     feature_id: str = ""
     #: Итог последнего пересчёта: пусто — всё в порядке.
@@ -200,7 +229,18 @@ class Operation:
 
     @property
     def subtract(self) -> bool:
-        return self.kind in ("pocket", "groove")
+        return self.kind in SUBTRACTIVE
+
+    @property
+    def all_sketches(self) -> list:
+        """Все эскизы операции: профиль, траектория, сечения — по порядку.
+
+        Одно место, где это перечислено: учёт свободных эскизов, удаление,
+        запись в файл и дерево обязаны видеть их одинаково. Забытая здесь
+        траектория числилась бы «свободной» и шла бы в следующую операцию.
+        """
+        found = [self.sketch, self.path, *self.sections]
+        return [item for item in found if item is not None]
 
     @property
     def dress_up(self) -> bool:
@@ -292,8 +332,9 @@ class Document:
         else:
             self.operations.insert(self._rollback, operation)
             self._rollback += 1
-        if operation.sketch is not None and operation.sketch not in self.sketches:
-            self.sketches.append(operation.sketch)
+        for sketch in operation.all_sketches:
+            if sketch not in self.sketches:
+                self.sketches.append(sketch)
         return operation
 
     def add_sketch(self, sketch) -> object:
@@ -309,13 +350,14 @@ class Document:
         израсходованный нельзя — второе выдавливание того же контура молча
         дало бы неожиданное тело.
         """
-        used = {id(item.sketch) for item in self.operations
-                if item.sketch is not None}
+        used = {id(sketch) for item in self.operations
+                for sketch in item.all_sketches}
         return [sketch for sketch in self.sketches if id(sketch) not in used]
 
     def remove_sketch(self, sketch) -> None:
         """Убрать эскиз вместе с операциями, которые на нём стоят."""
-        for item in [op for op in self.operations if op.sketch is sketch]:
+        for item in [op for op in self.operations
+                     if any(one is sketch for one in op.all_sketches)]:
             self.operations.remove(item)
         if sketch in self.sketches:
             self.sketches.remove(sketch)
@@ -430,6 +472,13 @@ class Document:
             self._settle_sketch(operation, previous, report)
             self._settle_plane(operation, previous)
             self._settle_marks(operation.sketch, previous)
+            # Траектория и сечения — такие же эскизы операции и стоят на
+            # тех же опорах: не пересаженные, они остались бы там, где грань
+            # была до правки, и протяжка шла бы по старому месту.
+            for extra in (operation.path, *operation.sections):
+                if extra is not None:
+                    self._settle_sketch(_Holder(extra), previous, report)
+                    self._settle_marks(extra, previous)
             answer = self._run(operation)
             operation.ok = answer.ok
             operation.message = answer.message
@@ -773,6 +822,35 @@ class Document:
         """
         return self._run(operation, preview=True, revision=revision)
 
+    def preview_edit(self, operation: Operation, original: Operation,
+                     revision: int = 0) -> FeatureResult:
+        """Предпросмотр ПРАВКИ: операция меняется на месте и тут же
+        возвращается как была.
+
+        Обычный предпросмотр ставит новую операцию поверх готовой детали —
+        а в ней правимая операция уже есть. Новый вариант ложился на
+        старый: уменьшение глубины не показывало ничего, а протяжка без
+        изменений отвергалась как «ничего не добавлено». Поэтому правка
+        показывается так, как она и будет применена: на месте, вместе со
+        всем, что стоит ниже по дереву. Ответ — деталь целиком.
+
+        Возврат делается ВСЕГДА, удалась проба или нет: иначе движок
+        остался бы с деталью, которой в дереве нет.
+        """
+        if not original.feature_id or original not in self.operations:
+            return self.preview(operation, revision)
+        from dataclasses import replace
+
+        trial = replace(operation, name=original.name,
+                        feature_id=original.feature_id, body=original.body)
+        answer = self._run(trial, revision=revision)
+        back = self._run(original)
+        if not back.ok:
+            # Вернуть не вышло — следующий пересчёт начнёт с чистого, а не
+            # поверх пробы.
+            self._stale = True
+        return answer
+
     def _run(self, operation: Operation, preview: bool = False,
              revision: int = 0) -> FeatureResult:
         common = dict(
@@ -881,6 +959,20 @@ class Document:
                 profile=profile, diameter=operation.diameter,
                 depth=operation.length, through_all=operation.through,
                 reversed=operation.reversed, **common))
+        if operation.kind in ("sweep", "sweep_cut"):
+            return self._run_sweep(operation, profile, common)
+        if operation.kind in ("loft", "loft_cut"):
+            return self._run_loft(operation, profile, common)
+        if operation.kind in ("helix", "helix_cut"):
+            return self.backend.helix(HelixRequest(
+                profile=profile, axis=tuple(operation.axis),
+                axis_origin=tuple(operation.axis_origin),
+                mode=operation.helix_mode, pitch=operation.pitch,
+                height=operation.height, turns=operation.turns,
+                angle_deg=operation.taper,
+                left_handed=operation.left_handed,
+                reversed=operation.reversed, subtract=operation.subtract,
+                **common))
         if operation.kind in ("revolve", "groove"):
             return self.backend.revolve(RevolveRequest(
                 profile=profile, angle_deg=operation.angle,
@@ -911,6 +1003,55 @@ class Document:
             taper_angle2_deg=operation.taper2,
             target_face2=operation.target2,
             **common))
+
+    def _run_sweep(self, operation, profile, common) -> FeatureResult:
+        """Протяжка: профиль — эскиз операции, траектория — свой эскиз."""
+        if operation.path is None:
+            return engine_module.error(
+                "NO_PATH", f"{operation.name}: траектория не задана", ["path"])
+        try:
+            # Траектория — линия, а не область: разомкнутые цепочки берутся
+            # всегда, когда замкнутых контуров в её эскизе нет.
+            path = engine_module.profile_of(operation.path, open_too=True)
+        except ValueError as failure:
+            return engine_module.error(
+                "PATH_LOST", f"{operation.name}: траектория: {failure}",
+                ["path"])
+        if path.empty:
+            return engine_module.error(
+                "NO_PATH",
+                f"{operation.name}: в эскизе траектории "
+                f"«{operation.path.name}» нет линий", ["path"])
+        return self.backend.sweep(SweepRequest(
+            profile=profile, path=path, mode=operation.sweep_mode,
+            transition=operation.transition, subtract=operation.subtract,
+            **common))
+
+    def _run_loft(self, operation, profile, common) -> FeatureResult:
+        """По сечениям: первое — эскиз операции, дальше — ``sections``."""
+        sections = []
+        for place, sketch in enumerate(operation.sections, start=2):
+            if sketch is None:
+                return engine_module.error(
+                    "NO_SECTION",
+                    f"{operation.name}: эскиза сечения {place} в детали нет",
+                    ["sections"])
+            try:
+                section = engine_module.profile_of(sketch)
+            except ValueError as failure:
+                return engine_module.error(
+                    "REGION_LOST",
+                    f"{operation.name}: сечение «{sketch.name}»: {failure}",
+                    ["sections"])
+            if section.empty:
+                return engine_module.error(
+                    "EMPTY_SECTION",
+                    f"{operation.name}: в эскизе сечения «{sketch.name}» нет "
+                    f"замкнутого контура", ["sections"])
+            sections.append(section)
+        return self.backend.loft(LoftRequest(
+            profile=profile, sections=sections, ruled=operation.ruled,
+            closed=operation.closed, subtract=operation.subtract, **common))
 
     # --- то, что нужно окну ---------------------------------------------
 
@@ -1036,6 +1177,18 @@ class Document:
                     "plane_name": item.plane_name,
                     "hole": (item.hole.to_dict() if item.hole is not None
                              else None),
+                    "path": places.get(id(item.path), -1),
+                    "sweep_mode": item.sweep_mode,
+                    "transition": item.transition,
+                    "sections": [places.get(id(sketch), -1)
+                                 for sketch in item.sections],
+                    "ruled": item.ruled,
+                    "closed": item.closed,
+                    "helix_mode": item.helix_mode,
+                    "pitch": item.pitch,
+                    "height": item.height,
+                    "turns": item.turns,
+                    "left_handed": item.left_handed,
                 }
                 for item in self.operations
             ],
@@ -1061,6 +1214,11 @@ class Document:
         rollback = data.get("rollback")
         self._rollback = None if rollback is None else int(rollback)
         highest = 0
+        def sketch_at(number):
+            number = int(number)
+            return (self.sketches[number]
+                    if 0 <= number < len(self.sketches) else None)
+
         for record in data.get("operations") or ():
             number = int(record.get("sketch", -1))
             operation = Operation(
@@ -1124,6 +1282,21 @@ class Document:
                 plane_name=str(record.get("plane_name") or ""),
                 hole=(_hole_from(record.get("hole"))
                       if record.get("hole") else None),
+                path=sketch_at(record.get("path", -1)),
+                sweep_mode=str(record.get("sweep_mode") or "standard"),
+                transition=str(record.get("transition") or "transformed"),
+                # Сечение, которого в файле не нашлось, не пропускается
+                # молча: тело по оставшимся было бы другим. Операция
+                # откажет на пересчёте и назовёт причину.
+                sections=[sketch_at(value)
+                          for value in (record.get("sections") or ())],
+                ruled=bool(record.get("ruled", False)),
+                closed=bool(record.get("closed", False)),
+                helix_mode=str(record.get("helix_mode") or "pitch-height"),
+                pitch=float(record.get("pitch", 5.0)),
+                height=float(record.get("height", 20.0)),
+                turns=float(record.get("turns", 4.0)),
+                left_handed=bool(record.get("left_handed", False)),
             )
             self.operations.append(operation)
             highest = max(highest, _trailing_number(operation.name))

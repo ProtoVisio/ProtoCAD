@@ -165,6 +165,10 @@ class PropertyPanel(QtWidgets.QWidget):
             item = self.body_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # Спрятать СРАЗУ: удаление отложенное, и до него старые
+                # группы оставались видны под новыми — панель прошлой
+                # команды просвечивала сквозь панель следующей.
+                widget.hide()
                 widget.deleteLater()
 
     def _build_group(self, group) -> QtWidgets.QWidget:

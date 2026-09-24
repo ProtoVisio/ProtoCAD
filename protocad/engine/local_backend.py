@@ -192,6 +192,15 @@ class LocalBackend:
     def pattern(self, request) -> FeatureResult:
         return self._frozen("массив")
 
+    def sweep(self, request) -> FeatureResult:
+        return self._frozen("протяжку по траектории")
+
+    def loft(self, request) -> FeatureResult:
+        return self._frozen("тело по сечениям")
+
+    def helix(self, request) -> FeatureResult:
+        return self._frozen("спираль")
+
     def section(self, request):
         """След детали на плоскости — тоже новое, и тоже мимо прототипа.
 
