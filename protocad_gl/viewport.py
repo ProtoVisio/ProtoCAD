@@ -430,6 +430,10 @@ class Viewport(QOpenGLWidget):
         #: Цвет по грани: {номер грани в сцене: номер цвета 1..10}. Так
         #: подготовка к расчёту красит группы — у каждой свой цвет.
         self.face_colors: dict = {}
+        #: Цвет по телу: {номер тела: номер цвета}. Так окно сборки выделяет
+        #: вхождение целиком и красит детали по видам — одной таблицей на
+        #: тело, а не перечнем тысяч граней. Цвет грани старше цвета тела.
+        self.body_colors: dict = {}
         self.palette = list(PALETTE)
         self.edge_selection: set[int] = set()
         # Что считается «верхом» экрана. По умолчанию мировая Z, но при
@@ -513,6 +517,7 @@ class Viewport(QOpenGLWidget):
         self.hover_face = 0
         self.face_group = set()
         self.face_colors = {}
+        self.body_colors = {}
         self.edge_selection = set()
         if not keep_view:
             self._pan[:] = 0.0
@@ -618,17 +623,14 @@ class Viewport(QOpenGLWidget):
         должна тонуть в цвете группы.
         """
         count = len(self.scene.positions)
-        if len(self.scene.face_ids) != count or not (self.face_group or self.face_colors):
-            return np.zeros(count, np.uint32)
         flags = np.zeros(count, np.uint32)
+        if self.body_colors and len(self.scene.ids) == count:
+            flags = _painted(self.scene.ids, self.body_colors)
+        if len(self.scene.face_ids) != count:
+            return flags
         if self.face_colors:
-            top = int(max(int(self.scene.face_ids.max(initial=0)),
-                          max(self.face_colors)))
-            lookup = np.zeros(top + 1, np.uint32)
-            for face, colour in self.face_colors.items():
-                if 0 <= int(face) <= top:
-                    lookup[int(face)] = int(colour)
-            flags = lookup[self.scene.face_ids]
+            painted = _painted(self.scene.face_ids, self.face_colors)
+            flags = np.where(painted > 0, painted, flags).astype(np.uint32)
         if self.face_group:
             wanted = np.fromiter(self.face_group, np.uint32, len(self.face_group))
             flags[np.isin(self.scene.face_ids, wanted)] = 1
@@ -681,6 +683,15 @@ class Viewport(QOpenGLWidget):
         if colours == self.face_colors:
             return
         self.face_colors = colours
+        self._flags_dirty = True
+        self.update()
+
+    def set_body_colors(self, colours) -> None:
+        """Цвета тел: {номер тела: номер цвета 1..10}. Пустой — снять."""
+        colours = dict(colours or {})
+        if colours == self.body_colors:
+            return
+        self.body_colors = colours
         self._flags_dirty = True
         self.update()
 
@@ -1421,6 +1432,17 @@ class Viewport(QOpenGLWidget):
         """Номер грани внутри тела; −1, если номер не о грани."""
         entry = self.scene.face_labels.get(identifier)
         return int(entry.get("face", -1)) if isinstance(entry, dict) else -1
+
+
+def _painted(numbers: np.ndarray, colours: dict) -> np.ndarray:
+    """Цвет каждой вершины по таблице {номер: цвет} — через массив-указатель,
+    без обхода вершин в Python."""
+    top = int(max(int(numbers.max(initial=0)), max(int(key) for key in colours)))
+    lookup = np.zeros(top + 1, np.uint32)
+    for key, colour in colours.items():
+        if 0 <= int(key) <= top:
+            lookup[int(key)] = int(colour)
+    return lookup[numbers]
 
 
 def default_surface_format() -> QtGui.QSurfaceFormat:

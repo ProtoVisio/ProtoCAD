@@ -129,9 +129,71 @@ def read_step(path) -> list:
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     found = []
+    names = InstanceNames(reader)
     for index in range(1, roots.Length() + 1):
-        _walk(roots.Value(index), TopLoc_Location(), found, Path(path).stem)
+        _walk(roots.Value(index), TopLoc_Location(), found, Path(path).stem, names)
     return found
+
+
+class InstanceNames:
+    """Имена вхождений так, как их записал автор файла.
+
+    Читатель OCCT берёт имя вхождения (NEXT_ASSEMBLY_USAGE_OCCURRENCE),
+    только если в нём есть «печатный» знак в смысле локали C — латиница,
+    цифра, знак препинания. Имя целиком по-русски — «Болт», «Корпус» — для
+    него пустое, и вместо имени он ставит номер вхождения. «R12» проходит,
+    «Корпус» — нет. Здесь такие имена достаются прямо из записей файла.
+
+    Записи перебираются, только если номер вместо имени действительно
+    встретился: на плате с латинскими обозначениями этого не бывает, а
+    перебор записей большого файла стоит секунд.
+    """
+
+    def __init__(self, reader):
+        self.reader = reader
+        self._names = None
+
+    def of(self, own: str) -> str:
+        """Имя вхождения по имени метки; пусто — осмысленного имени нет."""
+        if not own or own.startswith("=>"):
+            return ""
+        if not (own.isdigit() or own.upper().startswith("NAUO")):
+            return own
+        if self._names is None:
+            self._names = _usage_names(self.reader)
+        return self._names.get(own, "")
+
+
+def _usage_names(reader) -> dict:
+    """{номер вхождения: имя} по записям STEP. Номер, встреченный в файле
+    дважды, не разгадывается: подставить имя чужого вхождения хуже, чем
+    оставить без имени."""
+    from OCP.StepRepr import StepRepr_NextAssemblyUsageOccurrence
+
+    try:
+        model = reader.Reader().WS().Model()
+    except Exception:  # noqa: BLE001 — нет модели: и имён нет
+        return {}
+    names: dict = {}
+    twice: set = set()
+    for index in range(1, model.NbEntities() + 1):
+        entity = model.Value(index)
+        if not isinstance(entity, StepRepr_NextAssemblyUsageOccurrence):
+            continue
+        try:
+            key = entity.Id().ToCString()
+            name = entity.Name().ToCString().strip() if entity.Name() else ""
+            if not name and entity.HasDescription() and entity.Description():
+                name = entity.Description().ToCString().strip()
+        except (UnicodeDecodeError, AttributeError):
+            continue
+        if key in names or key in twice:
+            names.pop(key, None)
+            twice.add(key)
+            continue
+        if name and not name.isdigit():
+            names[key] = _repaired(name)
+    return names
 
 
 def _label_name(label) -> str:
@@ -159,7 +221,7 @@ def _repaired(name: str) -> str:
         return name
 
 
-def _walk(label, location, found: list, fallback: str) -> None:
+def _walk(label, location, found: list, fallback: str, names=None) -> None:
     """Обход дерева сборки XCAF с накоплением размещений."""
     from OCP.TDF import TDF_Label, TDF_LabelSequence
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
@@ -175,21 +237,22 @@ def _walk(label, location, found: list, fallback: str) -> None:
             placed = location.Multiplied(XCAFDoc_ShapeTool.GetLocation_s(component))
             # Имя вхождения лучше имени детали, когда оно осмысленное:
             # «Болт:3» различает три одинаковых болта. Служебное «=>[0:1:1:2]»
-            # и голый номер — не осмысленные: номер ядро подставляет само,
-            # когда имя вхождения совпадает с именем детали.
+            # — не осмысленное, а голый номер ядро подставляет вместо имени,
+            # которое не смогло прочитать (см. `InstanceNames`).
             own = _label_name(component)
-            name = own if own and not own.startswith("=>") and not own.isdigit() \
-                else ""
-            _walk_part(referred, placed, found, name, fallback)
+            name = names.of(own) if names is not None else (
+                own if own and not own.startswith("=>") and not own.isdigit() else "")
+            _walk_part(referred, placed, found, name, fallback, names)
         return
-    _walk_part(label, location, found, "", fallback)
+    _walk_part(label, location, found, "", fallback, names)
 
 
-def _walk_part(label, location, found: list, instance: str, fallback: str) -> None:
+def _walk_part(label, location, found: list, instance: str, fallback: str,
+               names=None) -> None:
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
 
     if XCAFDoc_ShapeTool.IsAssembly_s(label):
-        _walk(label, location, found, fallback)
+        _walk(label, location, found, fallback, names)
         return
     shape = XCAFDoc_ShapeTool.GetShape_s(label)
     if shape is None or shape.IsNull():

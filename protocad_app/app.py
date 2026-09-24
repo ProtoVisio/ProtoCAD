@@ -704,6 +704,9 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction("Открыть…", QtGui.QKeySequence.Open, self._open)
         file_menu.addAction("Сохранить как…", QtGui.QKeySequence.SaveAs, self._save_as)
         file_menu.addSeparator()
+        file_menu.addAction("Новая сборка", self._new_assembly)
+        file_menu.addAction("Открыть сборку…", self._open_assembly)
+        file_menu.addSeparator()
         file_menu.addAction("Экспорт STEP…", self._export_step)
         file_menu.addAction("Подготовка к расчёту…", self._to_prep)
         file_menu.addSeparator()
@@ -1780,6 +1783,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if not name:
             return
+        if not fmt.is_part_file(name):
+            # Сборка открывается в окне сборки: у неё нет дерева операций,
+            # и в окне детали показать её было бы нечем.
+            self._show_assembly(path=name)
+            return
         fresh = Document("Деталь", backend=self.document.backend)
         fresh.document_id = f"деталь:{Path(name).stem}"
         try:
@@ -1822,6 +1830,30 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "ProtoCAD", result.message)
             return
         self.status.showMessage(f"Выгружено: {Path(name).name}", 4000)
+
+    def _new_assembly(self) -> None:
+        self._show_assembly()
+
+    def _open_assembly(self) -> None:
+        name, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Открыть сборку", str(ROOT / "work"),
+            "Сборка ProtoCAD (*.prcadAsm);;Все файлы (*)")
+        if name:
+            self._show_assembly(path=name)
+
+    def _show_assembly(self, path=None) -> None:
+        """Окно сборки — отдельным окном, с тем же движком, что у детали:
+        детали ProtoCAD, вставленные в сборку, перестраивает он же."""
+        from protocad_asm.window import AssemblyWindow
+
+        folder = Path(path).parent if path else (
+            self.path.parent if self.path else ROOT / "work")
+        window = AssemblyWindow(folder=str(folder), backend=self.document.backend)
+        if path and not window.open_path(path):
+            return
+        window.show()
+        self._prep_windows = [item for item in getattr(self, "_prep_windows", [])
+                              if item.isVisible()] + [window]
 
     def _to_prep(self) -> None:
         """Передать деталь в подготовку к расчёту — отдельным окном.

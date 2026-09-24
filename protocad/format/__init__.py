@@ -175,6 +175,19 @@ def write_document(document, path: str | Path, drawings=None) -> Path:
     return path
 
 
+def is_part_file(path: str | Path) -> bool:
+    """Деталь ProtoCAD с деревом операций — или состав (сборка).
+
+    Испорченный файл считается деталью: тогда его разбирает чтение детали
+    и объясняет, что не так, а не окно сборки с чужим отказом.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return INTENT_NAME in archive.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return True
+
+
 def read_document(path: str | Path, document) -> dict:
     """Прочитать контейнер в переданный документ. Возвращает манифест.
 

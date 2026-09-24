@@ -26,11 +26,17 @@ import numpy as np
 from .. import model as model_module
 from ..model import KIND_ASSEMBLY, Assembly as Composition, Item
 from . import faces as faces_module
-from .model import Assembly as MateSet, Instance, Mate, Reference
+from .model import TITLES, Assembly as MateSet, Instance, Mate, Reference
 from .solve import solve
 
 #: Имя записи сопряжений в контейнере.
 EXTRA = "assembly"
+
+#: Состояния вхождения — как их показывает дерево.
+FIXED = "закреплено"
+MATED = "сопряжено"
+FREE = "свободно"
+BROKEN = "ошибка"
 
 
 class AssemblyDocument:
@@ -47,7 +53,12 @@ class AssemblyDocument:
         self.sources: dict = {}
         self.path: Path | None = None
         self.diagnostics: list = []
+        #: Описания граней по изделию: одно определение — один разбор, сколько
+        #: бы вхождений у него ни было.
         self._faces: dict = {}
+        #: Разбивка определений для показа — живёт между пересборками сцены:
+        #: сдвиг вхождения меняет матрицу, а не треугольники.
+        self._scene_cache: dict = {}
 
     # --- состав -------------------------------------------------------------
 
@@ -112,6 +123,19 @@ class AssemblyDocument:
         self.mates = [mate for mate in self.mates if mate not in gone]
         return gone
 
+    def status(self, occurrence) -> str:
+        """Что держит вхождение: закрепление, сопряжения или ничего."""
+        mine = self.mates_of(occurrence)
+        if any(not mate.ok for mate in mine):
+            return BROKEN
+        if occurrence.stable_id in self.fixed:
+            return FIXED
+        return MATED if mine else FREE
+
+    def mates_of(self, occurrence) -> list:
+        return [mate for mate in self.mates
+                if occurrence.stable_id in (mate.first.instance, mate.second.instance)]
+
     def fix(self, occurrence, on: bool = True) -> None:
         if on:
             self.fixed.add(occurrence.stable_id)
@@ -127,10 +151,7 @@ class AssemblyDocument:
 
     def faces(self, occurrence) -> list:
         """Описания граней вхождения в ЕГО собственных координатах."""
-        item = occurrence.item
-        if item.stable_id not in self._faces:
-            self._faces[item.stable_id] = _faces_of(item)
-        return self._faces[item.stable_id]
+        return _faces_of(occurrence.item, self._faces)
 
     def forget_faces(self) -> None:
         """Забыть описания — после правки деталей."""
@@ -163,7 +184,7 @@ class AssemblyDocument:
                 return None
             chain = chain @ inner.transform
             holder = inner.item
-        local = _faces_of(holder)
+        local = _faces_of(holder, self._faces)
         face = next((item for item in local if item["index"] == entry["face"]), None)
         if face is None:
             return None
@@ -189,11 +210,29 @@ class AssemblyDocument:
     def remove_mate(self, mate) -> None:
         self.mates = [item for item in self.mates if item is not mate]
 
+    def describe(self, mate) -> str:
+        """Сопряжение словами: «Соосность: Плита — Болт»."""
+        names = []
+        for reference in (mate.first, mate.second):
+            occurrence = self.occurrence(reference.instance)
+            names.append(occurrence.label if occurrence is not None else "(нет)")
+        text = f"{TITLES.get(mate.kind, mate.kind)}: {names[0]} — {names[1]}"
+        if mate.kind == "distance":
+            text += f", {mate.value_mm:g} мм"
+        if mate.flip:
+            text += ", развёрнуто"
+        return text
+
     def solve(self) -> list:
         """Расставить вхождения по сопряжениям. Замечания — и в итог, и в
         ``diagnostics``: окно показывает их, не вызывая решение повторно."""
         by_id = {}
         instances = []
+        # Грани нужны только тем, на кого ссылаются сопряжения: разбирать
+        # ради решения всю плату с тысячей ЭРИ, стоящую на закреплении,
+        # незачем.
+        mated = {reference.instance for mate in self.mates
+                 for reference in (mate.first, mate.second)}
         for occurrence in self.root.placements:
             rotation = occurrence.transform[:3, :3]
             shift = occurrence.transform[:3, 3]
@@ -202,7 +241,8 @@ class AssemblyDocument:
                 placement=(tuple(float(v) for v in shift),
                            tuple(tuple(float(v) for v in row) for row in rotation)),
                 fixed=occurrence.stable_id in self.fixed,
-                faces=self.faces(occurrence))
+                faces=(self.faces(occurrence) if occurrence.stable_id in mated
+                       else []))
             instances.append(instance)
             by_id[instance.id] = occurrence
         found = solve(MateSet(self.root.name, instances, self.mates))
@@ -224,7 +264,33 @@ class AssemblyDocument:
         раскладываются по одному буферу видеопамяти."""
         from ..preview import build
 
-        return build(self.root, deflection)
+        return build(self.root, deflection, cache=self._scene_cache)
+
+    def bodies_of(self, preview, occurrence) -> list:
+        """Номера тел показа, принадлежащих вхождению верхнего уровня."""
+        return [number for number, body in preview.id_to_object.items()
+                if (body.get("path") or [None])[0] == occurrence.stable_id]
+
+    # --- отмена -------------------------------------------------------------------
+
+    def snapshot(self) -> dict:
+        """Всё, что меняет окно сборки. Формы деталей окно не правит, поэтому
+        снимок — это списки и матрицы, а не геометрия."""
+        return {"placements": list(self.root.placements),
+                "transforms": {occurrence.stable_id: occurrence.transform.copy()
+                               for occurrence in self.root.placements},
+                "mates": [Mate.from_dict(mate.to_dict()) for mate in self.mates],
+                "fixed": set(self.fixed),
+                "sources": dict(self.sources)}
+
+    def restore(self, state: dict) -> None:
+        self.root.placements = list(state["placements"])
+        for occurrence in self.root.placements:
+            occurrence.transform = state["transforms"][occurrence.stable_id].copy()
+        self.mates = [Mate.from_dict(mate.to_dict()) for mate in state["mates"]]
+        self.fixed = set(state["fixed"])
+        self.sources = dict(state["sources"])
+        self.diagnostics = []
 
     def bom(self) -> list:
         return self.root.bom()
@@ -243,10 +309,18 @@ class AssemblyDocument:
         from ..preview import build
 
         _snapshot_engine_parts(self.root)
-        path = fmt.write(self.root, path, preview=build(self.root),
+        path = fmt.write(self.root, path,
+                         preview=build(self.root, cache=self._scene_cache),
                          extras={EXTRA: self.to_dict()})
         self.path = Path(path)
         return self.path
+
+    def export_step(self, path) -> Path:
+        """STEP для расчётной системы: сборка со структурой и именами."""
+        from .export import write_step_tree
+
+        _snapshot_engine_parts(self.root)
+        return write_step_tree(self.root, path)
 
     def to_dict(self) -> dict:
         return {"schema": 1,
@@ -275,17 +349,26 @@ class AssemblyDocument:
 # --- грани изделия ----------------------------------------------------------------
 
 
-def _faces_of(item) -> list:
-    """Грани изделия в его координатах. У сборки — грани всех её деталей."""
+def _faces_of(item, cache: dict | None = None) -> list:
+    """Грани изделия в его координатах. У сборки — грани всех её деталей.
+
+    ``cache`` — {stable_id изделия: описания}: одинаковые детали разбираются
+    один раз, а у сборки переставляются готовые описания.
+    """
+    if cache is not None and item.stable_id in cache:
+        return cache[item.stable_id]
     if isinstance(item, Composition):
         found = []
         for occurrence in item.placements:
-            for face in _faces_of(occurrence.item):
+            for face in _faces_of(occurrence.item, cache):
                 moved = _moved(face, occurrence.transform)
                 moved["index"] = len(found)
                 found.append(moved)
-        return found
-    return faces_module.item_faces(item)
+    else:
+        found = faces_module.item_faces(item)
+    if cache is not None:
+        cache[item.stable_id] = found
+    return found
 
 
 def _moved(face: dict, matrix) -> dict:

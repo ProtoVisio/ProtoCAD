@@ -75,7 +75,7 @@ def read_step_tree(path) -> Item:
     from OCP.TDocStd import TDocStd_Document
     from OCP.XCAFDoc import XCAFDoc_DocumentTool
 
-    from ..prep.io import quiet
+    from ..prep.io import InstanceNames, quiet
 
     path = Path(path)
     document = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
@@ -90,7 +90,8 @@ def read_step_tree(path) -> Item:
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     definitions: dict = {}
-    items = [_definition(roots.Value(index), definitions, path.stem)
+    names = InstanceNames(reader)
+    items = [_definition(roots.Value(index), definitions, path.stem, names)
              for index in range(1, roots.Length() + 1)]
     items = [item for item in items if item is not None]
     if not items:
@@ -114,7 +115,7 @@ def _entry(label) -> str:
     return text.ToCString()
 
 
-def _definition(label, definitions: dict, fallback: str):
+def _definition(label, definitions: dict, fallback: str, names=None):
     """Определение по метке XCAF — одно на все вхождения этой метки."""
     from OCP.TDF import TDF_Label, TDF_LabelSequence
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
@@ -135,12 +136,12 @@ def _definition(label, definitions: dict, fallback: str):
             referred = TDF_Label()
             if not XCAFDoc_ShapeTool.GetReferredShape_s(component, referred):
                 continue
-            item = _definition(referred, definitions, name)
+            item = _definition(referred, definitions, name, names)
             if item is None:
                 continue
             own = _label_name(component)
-            reference = (own if own and not own.startswith("=>") and not own.isdigit()
-                         else "")
+            reference = names.of(own) if names is not None else (
+                own if own and not own.startswith("=>") and not own.isdigit() else "")
             matrix = _matrix(XCAFDoc_ShapeTool.GetLocation_s(component))
             assembly.place(item, reference, matrix)
         return assembly if assembly.placements else None
@@ -169,13 +170,9 @@ def _matrix(location) -> np.ndarray:
 
 
 def _read_container(path: Path, backend) -> Item:
-    import zipfile
-
     from .. import format as fmt
 
-    with zipfile.ZipFile(path) as archive:
-        names = set(archive.namelist())
-    if fmt.INTENT_NAME in names:
+    if fmt.is_part_file(path):
         return _engine_part(path, backend)
     root, _manifest = fmt.read(path)
     return root

@@ -131,7 +131,8 @@ def build(
         if from_engine is None and shape is None:
             return
         key = (item.stable_id, id(shape),
-               id(getattr(getattr(item, "document", None), "result", None)))
+               id(getattr(getattr(item, "document", None), "result", None)),
+               deflection, edge_deflection)
         if key not in mesh_cache:
             alive[key] = (shape, getattr(getattr(item, "document", None), "result", None))
             if from_engine is not None:
@@ -162,6 +163,9 @@ def build(
             "name": item.name,
             "proto_id": item.proto_id,
             "faces": face_count,
+            # Номера граней тела в сцене — подряд с этого. По ним вхождение
+            # выделяется целиком, не перебирая словарь всех граней сцены.
+            "first_face": next_face_id,
             # Путь вхождений от корня до детали. Во вложенной сборке
             # щелчок попадает в деталь подсборки, а сопрягают и двигают
             # вхождение верхнего уровня — без пути его не найти.
