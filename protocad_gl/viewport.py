@@ -464,6 +464,13 @@ class Viewport(QOpenGLWidget):
         self._empty_vao = None
         self._buffers: list = []
         self._dirty = True
+        #: Изменились только признаки подсветки (цвета наборов, выбранные
+        #: рёбра). Перезаливать ради них всю геометрию нельзя: на плате в
+        #: тысячи тел это сотни мегабайт на каждый щелчок — ровно то, от
+        #: чего тормозят сборки плат. Обновляется один маленький буфер.
+        self._flags_dirty = False
+        self._face_flag_buffer = None
+        self._edge_flag_buffer = None
         self._last_pos = None
         self._press_pos = None
         # Кто перехватывает мышь вместо вида. В режиме эскиза это эскиз:
@@ -564,11 +571,13 @@ class Viewport(QOpenGLWidget):
                 GL.glDeleteVertexArrays(1, [vao])
         self._face_vao = self._edge_vao = self._preview_vao = None
 
+        self._face_flag_buffer = self._edge_flag_buffer = None
         if not self.scene.empty:
             self._face_vao = self._make_vao(
                 self.scene.positions, self.scene.normals, self.scene.ids,
                 self.scene.face_ids, self._group_flags(),
             )
+            self._face_flag_buffer = self._buffers[-1]
         if len(self.scene.edge_positions):
             self._edge_vao = self._make_vao(
                 self.scene.edge_positions,
@@ -577,6 +586,7 @@ class Viewport(QOpenGLWidget):
                 np.zeros(len(self.scene.edge_positions), np.uint32),
                 self._edge_flags(),
             )
+            self._edge_flag_buffer = self._buffers[-1]
         if self.preview_scene is not None and not self.preview_scene.empty:
             self._preview_vao = self._make_vao(
                 self.preview_scene.positions, self.preview_scene.normals,
@@ -585,6 +595,20 @@ class Viewport(QOpenGLWidget):
                 np.zeros(len(self.preview_scene.positions), np.uint32),
             )
         self._dirty = False
+        self._flags_dirty = False
+
+    def _upload_flags(self) -> None:
+        """Перезалить ТОЛЬКО признаки подсветки — геометрия остаётся в
+        видеопамяти как была."""
+        for buffer, flags in ((self._face_flag_buffer, self._group_flags),
+                              (self._edge_flag_buffer, self._edge_flags)):
+            if buffer is None:
+                continue
+            data = np.ascontiguousarray(flags(), dtype=np.uint32)
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, buffer)
+            GL.glBufferSubData(GL.GL_ARRAY_BUFFER, 0, data.nbytes, data)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        self._flags_dirty = False
 
     def _group_flags(self) -> np.ndarray:
         """Номер цвета набора для каждой вершины; ноль — своего цвета нет.
@@ -623,7 +647,7 @@ class Viewport(QOpenGLWidget):
         if chosen == self.edge_selection:
             return
         self.edge_selection = chosen
-        self._dirty = True
+        self._flags_dirty = True
         self.update()
 
     def set_preview_scene(self, scene) -> None:
@@ -647,7 +671,7 @@ class Viewport(QOpenGLWidget):
         if group == self.face_group:
             return
         self.face_group = group
-        self._dirty = True
+        self._flags_dirty = True
         self.update()
 
     def set_face_colors(self, colours) -> None:
@@ -657,7 +681,7 @@ class Viewport(QOpenGLWidget):
         if colours == self.face_colors:
             return
         self.face_colors = colours
-        self._dirty = True
+        self._flags_dirty = True
         self.update()
 
     def _make_vao(self, positions, normals, ids, face_ids=None, groups=None):
@@ -909,6 +933,8 @@ class Viewport(QOpenGLWidget):
     def paintGL(self) -> None:
         if self._dirty:
             self._upload()
+        elif self._flags_dirty:
+            self._upload_flags()
         # Состояние восстанавливается ДО очистки: с оставшимся от QPainter
         # отсечением очистка глубины обрезается, и следующий кадр
         # сравнивается с мусором в буфере.
