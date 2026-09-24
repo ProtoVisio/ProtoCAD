@@ -39,7 +39,7 @@ from .defeature import defeature, find_fillets, find_holes, find_small_faces
 from .fluid import enclosure
 from .glue import glue, overlaps
 from .heal import heal
-from .io import load, write_brep, write_step, write_stl
+from .io import from_document, load, write_brep, write_step, write_stl
 from .mesh import MeshSpec, find_python, mesh
 from .model import Body, Finding, Group, Report, Study
 from .recipe import record, run, run_step
@@ -49,7 +49,8 @@ __all__ = [
     "Body", "Finding", "Group", "MeshSpec", "Report", "Study",
     "check", "cut_by_plane", "defeature", "describe", "drop_group",
     "enclosure", "find_fillets", "find_holes", "find_python",
-    "find_small_faces", "glue", "heal", "load", "make_group", "mesh",
-    "overlaps", "picked_rule", "record", "run", "run_step", "select",
-    "split_by_plane", "write_brep", "write_step", "write_stl",
+    "find_small_faces", "from_document", "glue", "heal", "load",
+    "make_group", "mesh", "overlaps", "picked_rule", "record", "run",
+    "run_step", "select", "split_by_plane", "write_brep", "write_step",
+    "write_stl",
 ]

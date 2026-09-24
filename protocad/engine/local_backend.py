@@ -234,6 +234,33 @@ class LocalBackend:
         return error("NOT_SUPPORTED",
                      "прототип не умеет открывать документы", ["path"], self.name)
 
+    def export(self, document_id: str, path, body_id: str = "") -> FeatureResult:
+        """Выгрузить тела в STEP (с именами) или BREP.
+
+        Выгрузка — не операция детали, и заморозка прототипа (§15.1) её не
+        касается: новой геометрии здесь не строится, отдаётся построенная.
+        Без неё путь «деталь → подготовка к расчёту» нельзя было бы
+        проверить там, где FreeCAD не установлен.
+        """
+        from pathlib import Path
+
+        from ..prep.io import write_brep, write_step
+        from ..prep.model import Study
+
+        names = [body_id] if body_id else list(self.shapes)
+        present = [(name, self.shapes[name]) for name in names if name in self.shapes]
+        if not present:
+            return error("EMPTY_RESULT", "тело пустое", [], self.name)
+        study = Study(name=document_id)
+        for name, shape in present:
+            study.add_body(shape, name)
+        if Path(path).suffix.lower() in (".step", ".stp"):
+            write_step(study, path)
+        else:
+            write_brep(study, path)
+        return FeatureResult(status=Status.VALID,
+                             feature_id=";".join(name for name, _ in present))
+
     def scene(self, document_id: str, body_id: str = "") -> FeatureResult:
         shape = self.shapes.get(body_id)
         if shape is None:

@@ -28,10 +28,14 @@ from .model import ERROR, INFO, WARNING, Report, logged
 #: номеров для подсветки: тысяча чисел в строке никому не поможет.
 LISTED = 8
 
+#: Сколько тел проверять попарно без явной просьбы. Пары растут квадратом:
+#: на сотне касающихся деталей это тысячи булевых операций и минуты.
+PAIR_LIMIT = 60
+
 
 @logged
 def check(study, small: float = 0.0, deep: bool = False,
-          pairs: bool = True) -> Report:
+          pairs=None) -> Report:
     """Проверить исследование. Геометрию не меняет.
 
     ``small`` — что считать мелким ребром, мм. По умолчанию тысячная доля
@@ -42,7 +46,8 @@ def check(study, small: float = 0.0, deep: bool = False,
     большой сборке это минуты, поэтому по требованию.
 
     ``pairs`` — наложения и касания между телами. Попарно, с отсевом по
-    габаритам.
+    габаритам. ``None`` — если тел не больше ``PAIR_LIMIT``; ``True`` —
+    всегда, ``False`` — никогда.
     """
     diagonal = study.diagonal()
     report = Report("check", params={"small": small, "deep": deep, "pairs": pairs})
@@ -54,7 +59,13 @@ def check(study, small: float = 0.0, deep: bool = False,
 
     for body in study.bodies:
         _check_body(study, body, small, deep, report)
-    if pairs and len(study.bodies) > 1:
+    many = len(study.bodies) > PAIR_LIMIT
+    if pairs is None and many:
+        report.note("PAIRS_SKIPPED",
+                    f"наложения и касания не проверялись: тел {len(study.bodies)}, "
+                    f"попарная проверка займёт долго. Запросите её явно "
+                    f"(pairs=True)", INFO)
+    elif (pairs or pairs is None) and len(study.bodies) > 1:
         _check_pairs(study, report, diagonal)
 
     blocking = [item for item in report.findings if item.severity == ERROR]

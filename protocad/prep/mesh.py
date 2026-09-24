@@ -40,7 +40,7 @@ from OCP.BRepGProp import BRepGProp
 from OCP.GProp import GProp_GProps
 
 from .model import BODY_GROUP, ERROR, FACE_GROUP, INFO, WARNING, Report, logged, solids_of
-from .names import solver_names
+from .names import keyed_solver_names, solver_name
 
 RUNNER = Path(__file__).with_name("gmsh_runner.py")
 ROOT = Path(__file__).resolve().parents[2]
@@ -124,7 +124,7 @@ def find_python() -> tuple:
 @logged
 def mesh(study, spec: MeshSpec | None = None, outputs=(), scale: float = 1.0,
          python: str | None = None, timeout: float = 1800.0,
-         keep_job: str | None = None) -> Report:
+         keep_job: str | None = None, preview: bool = False) -> Report:
     """Построить сетку и записать файлы. Геометрию исследования не меняет.
 
     ``scale`` — множитель координат при записи: 0.001 переводит миллиметры
@@ -164,6 +164,8 @@ def mesh(study, spec: MeshSpec | None = None, outputs=(), scale: float = 1.0,
     folder.mkdir(parents=True, exist_ok=True)
     try:
         job, names = _job(study, spec, outputs, scale, folder)
+        if preview:
+            job["preview"] = str(folder / "preview.npz")
         report.used["names"] = names
         job_path = folder / "job.json"
         job_path.write_text(json.dumps(job, ensure_ascii=False, indent=1),
@@ -183,6 +185,12 @@ def mesh(study, spec: MeshSpec | None = None, outputs=(), scale: float = 1.0,
                                f"построитель сетки упал, не ответив"
                                + (f": {tail}" if tail else ""))
         answer = json.loads(answer_path.read_text(encoding="utf-8"))
+        shown = Path(job.get("preview") or folder / "нет")
+        if shown.is_file():
+            import numpy as np
+
+            with np.load(shown) as data:
+                report.preview = {"triangles": data["triangles"]}
     finally:
         if not keep_job:
             shutil.rmtree(folder, ignore_errors=True)
@@ -214,10 +222,10 @@ def mesh(study, spec: MeshSpec | None = None, outputs=(), scale: float = 1.0,
             report.note("POOR_ELEMENTS",
                         f"плохих элементов (minSICN < 0,1): {quality['poor']} "
                         f"из {quality['count']}", WARNING)
-    renamed = {name: value for name, value in names.items() if name != value}
+    renamed = [(name, value) for name, value in names if name != value]
     if renamed:
         report.note("RENAMED", "в файлах группы называются так: " + ", ".join(
-            f"«{name}» → {value}" for name, value in renamed.items()), INFO)
+            f"«{name}» → {value}" for name, value in renamed), INFO)
     return report
 
 
@@ -242,8 +250,10 @@ def _job(study, spec: MeshSpec, outputs, scale: float, folder: Path) -> tuple:
                    if group.kind == FACE_GROUP and group.faces]
     body_groups = [group for group in study.groups.values()
                    if group.kind == BODY_GROUP and group.bodies]
-    names = solver_names(body_names + [group.name for group in body_groups]
-                         + [group.name for group in face_groups])
+    keyed = keyed_solver_names(
+        [(("body", name), name) for name in body_names]
+        + [(("material", group.name), group.name) for group in body_groups]
+        + [(("faces", group.name), group.name) for group in face_groups])
     number = {name: index for index, name in enumerate(body_names)}
     bodies = []
     for body in study.bodies:
@@ -251,7 +261,7 @@ def _job(study, spec: MeshSpec, outputs, scale: float, folder: Path) -> tuple:
         for solid in solids_of(body.shape):
             centre, volume = _measure(solid, True)
             solids.append({"center": centre, "volume": volume})
-        bodies.append({"name": body.name, "solver_name": names[body.name],
+        bodies.append({"name": body.name, "solver_name": keyed[("body", body.name)],
                        "solids": solids})
     groups = []
     for group in face_groups:
@@ -261,19 +271,24 @@ def _job(study, spec: MeshSpec, outputs, scale: float, folder: Path) -> tuple:
             owners = study.owners(index)
             faces.append({"center": centre, "area": area,
                           "body": number.get(owners[0], -1) if owners else -1})
-        groups.append({"name": group.name, "solver_name": names[group.name],
+        groups.append({"name": group.name,
+                       "solver_name": keyed[("faces", group.name)],
                        "faces": faces})
-    materials = [{"name": group.name, "solver_name": names[group.name],
+    materials = [{"name": group.name,
+                  "solver_name": keyed[("material", group.name)],
                   "bodies": sorted(number[name] for name in group.bodies
                                    if name in number)}
                  for group in body_groups]
     local = {group: value for group, value in spec.local.items()}
     job = {
         "name": study.name,
-        "title": solver_names([study.name])[study.name],
+        "title": solver_name(study.name),
         "brep": str(brep),
         "result": str(folder / "result.json"),
-        "tolerance": max(study.diagonal() * 1e-6, 1e-7),
+        # Допуск опознания. Центры и площади считает ядро и там, и тут, но
+        # сборки OCCT у gmsh и у OCP разные: в миллионных долях они могут
+        # разойтись, а неопознанная грань — отказ всей сетки.
+        "tolerance": max(study.diagonal() * 1e-5, 1e-6),
         "bodies": bodies,
         "face_groups": groups,
         "body_groups": materials,
@@ -281,4 +296,5 @@ def _job(study, spec: MeshSpec, outputs, scale: float, folder: Path) -> tuple:
         "outputs": list(outputs),
         "scale": scale,
     }
+    names = [[name, value] for (_kind, name), value in keyed.items()]
     return job, names

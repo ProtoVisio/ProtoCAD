@@ -1162,6 +1162,15 @@ class Document:
     def save(self, path) -> FeatureResult:
         return self.backend.save(self.document_id, path)
 
+    def export(self, path, body: str = "") -> FeatureResult:
+        """Выгрузить деталь в STEP или BREP: в подготовку к расчёту и в
+        соседние системы. Пишет движок — форма у него, а не у документа."""
+        exporter = getattr(self.backend, "export", None)
+        if exporter is None:
+            return engine_module.error(
+                "NOT_SUPPORTED", "движок не умеет выгружать деталь", ["path"])
+        return exporter(self.document_id, path, body)
+
     def open(self, path) -> FeatureResult:
         """Открыть документ ДВИЖКА (его собственный формат).
 

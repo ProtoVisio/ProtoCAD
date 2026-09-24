@@ -117,6 +117,9 @@ class Report:
     findings: list = field(default_factory=list)
     before: dict = field(default_factory=dict)
     after: dict = field(default_factory=dict)
+    #: Крупные данные для показа (треугольники сетки). В журнал и в JSON не
+    #: идут: это картинка, а не итог.
+    preview: object = field(default=None, repr=False, compare=False)
 
     def note(self, code: str, message: str, severity: str = WARNING,
              faces=(), edges=(), bodies=()) -> Finding:

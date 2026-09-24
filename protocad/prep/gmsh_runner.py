@@ -133,6 +133,9 @@ def run(gmsh, job: dict, result: dict) -> None:
             f"по такой сетке нельзя. Уменьшите размер элемента у тонких мест "
             f"или уберите мелочи")
 
+    if job.get("preview"):
+        _write_preview(gmsh, np, job["preview"], result)
+
     scale = float(job.get("scale", 1.0))
     for output in job["outputs"]:
         lower = output.lower()
@@ -169,7 +172,7 @@ def _match_bodies(gmsh, job: dict, tolerance: float) -> dict:
         for solid in body["solids"]:
             hits = [tag for tag, centre, volume in available
                     if _close(centre, solid["center"], tolerance)
-                    and abs(volume - solid["volume"]) <= 1e-6 * max(abs(volume), 1.0)]
+                    and abs(volume - solid["volume"]) <= 1e-5 * max(abs(volume), 1.0)]
             if len(hits) != 1:
                 raise JobError(
                     f"тело «{body['name']}» не опознано в построителе сетки "
@@ -198,7 +201,7 @@ def _match_faces(gmsh, job: dict, volumes: dict, tolerance: float) -> dict:
         for face in group["faces"]:
             hits = [tag for tag, (centre, area) in measured.items()
                     if _close(centre, face["center"], tolerance)
-                    and abs(area - face["area"]) <= 1e-6 * max(abs(area), 1.0)]
+                    and abs(area - face["area"]) <= 1e-5 * max(abs(area), 1.0)]
             if face.get("body", -1) >= 0 and len(hits) > 1:
                 hits = [tag for tag in hits
                         if any(body == face["body"] for body, _ in owners.get(tag, ()))]
@@ -290,6 +293,36 @@ def _sizes(gmsh, job: dict, spec: dict, surfaces: dict) -> None:
         smallest = gmsh.model.mesh.field.add("Min")
         gmsh.model.mesh.field.setNumbers(smallest, "FieldsList", fields)
         gmsh.model.mesh.field.setAsBackgroundMesh(smallest)
+
+
+#: Больше треугольников в показ не отдаём: картинка с миллионами рёбер
+#: не читается, а память и время на передачу — настоящие.
+PREVIEW_LIMIT = 1_500_000
+
+
+def _write_preview(gmsh, np, path: str, result: dict) -> None:
+    """Треугольники поверхности сетки — чтобы окно показало саму сетку."""
+    tags, coords, _ = gmsh.model.mesh.getNodes()
+    order = np.argsort(tags)
+    tags = np.asarray(tags)[order]
+    coords = np.asarray(coords, dtype=np.float32).reshape(-1, 3)[order]
+    chunks = []
+    for _dim, surface in gmsh.model.getEntities(2):
+        kinds, _etags, enodes = gmsh.model.mesh.getElements(2, surface)
+        for kind, nodes in zip(kinds, enodes):
+            count = gmsh.model.mesh.getElementProperties(int(kind))[3]
+            corners = np.asarray(nodes).reshape(-1, count)[:, :3]
+            chunks.append(corners)
+    if not chunks:
+        return
+    corners = np.concatenate(chunks)
+    if len(corners) > PREVIEW_LIMIT:
+        result["notes"].append(f"сетка слишком велика для показа "
+                               f"({len(corners)} треугольников поверхности)")
+        return
+    places = np.searchsorted(tags, corners.reshape(-1))
+    triangles = coords[places].reshape(-1, 3, 3)
+    np.savez_compressed(path, triangles=triangles)
 
 
 # --- итог ------------------------------------------------------------------

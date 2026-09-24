@@ -122,3 +122,15 @@ def test_calculix_solves_cantilever(beam, tmp_path):
     uz = [float(row[3]) for row in rows if len(row) == 4 and row[0].isdigit()]
     theory = 100 * 100 ** 3 / (3 * 210000 * (10 * 10 ** 3 / 12))
     assert abs(-np.mean(uz) - theory) / theory < 0.02
+
+
+def test_body_and_group_with_same_name(tmp_path):
+    """Тело «Опора» и группа граней «Опора» — разные наборы в файле."""
+    study = study_of(("Опора", kernel.box(10, 10, 10)))
+    study.add_group("Опора", faces=select(study, {"type": "plane", "normal": [0, 0, -1]}))
+    path = tmp_path / "same.inp"
+    report = mesh(study, MeshSpec(size=4.0), [path])
+    assert report.ok, report.text()
+    text, _nodes, elements, sets, surfaces = _read_inp(path)
+    assert list(elements) == ["Opora"]
+    assert "Opora_2" in sets and "Opora_2" in surfaces

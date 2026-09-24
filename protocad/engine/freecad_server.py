@@ -1131,6 +1131,50 @@ class Engine:
                 "bodies": bodies,
                 "features": [item.Name for item in document.Objects]}
 
+    def export(self, request: dict) -> dict:
+        """Выгрузить деталь в STEP или BREP — для подготовки к расчёту и
+        для соседних систем.
+
+        STEP пишет модуль Import самого FreeCAD: он кладёт в файл имена тел,
+        и препроцессор видит «Тело», «Тело 2», а не безымянные формы. BREP
+        имён не держит — это точная форма и только.
+
+        Без тела в запросе выгружаются ВСЕ тела: деталь бывает из
+        нескольких, и расчёт на половине детали был бы расчётом не того.
+        """
+        document = self._document(request.get("document_id", "документ"))
+        path = request.get("path") or ""
+        if not path:
+            return _error("NO_PATH", "не указан путь выгрузки", ["path"])
+        wanted = request.get("body_id") or ""
+        if wanted:
+            body = self._known_body(document, wanted)
+            if body is None:
+                return _error("NO_BODY", f"тела «{wanted}» в детали нет",
+                              ["body_id"])
+            bodies = [body]
+        else:
+            bodies = [item for item in document.Objects
+                      if item.TypeId == "PartDesign::Body"]
+        alive = [item for item in bodies if _has_shape(item)]
+        if not alive:
+            return _error("EMPTY_RESULT", "в детали нет ни одного тела", [])
+        if path.lower().endswith((".step", ".stp")):
+            import Import
+
+            Import.export(alive, path)
+        else:
+            import Part
+
+            shapes = [item.Shape for item in alive]
+            whole = shapes[0] if len(shapes) == 1 else Part.makeCompound(shapes)
+            whole.exportBrep(path)
+        if not os.path.isfile(path):
+            return _error("EXPORT_FAILED", f"движок не записал файл: {path}",
+                          ["path"])
+        return {"status": "valid", "diagnostics": [], "path": path,
+                "bodies": [item.Label for item in alive]}
+
     def scene(self, request: dict) -> dict:
         """Деталь сеткой. Без указания тела — ВСЕ тела документа.
 
@@ -2531,6 +2575,7 @@ def main() -> int:
         "hole_tool": engine.hole_tool,
         "material_span": engine.material_span,
         "drop_feature": engine.drop_feature,
+        "export": engine.export,
         "clear": engine.clear,
         "reset": engine.reset,
     }

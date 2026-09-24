@@ -97,6 +97,15 @@ class Backend:
         """Массив операций: линейный, круговой или зеркало."""
         raise NotImplementedError
 
+    def export(self, document_id: str, path, body_id: str = "") -> FeatureResult:
+        """Выгрузить построенную деталь в STEP (с именами тел) или BREP.
+
+        Не операция, а обмен: так деталь уходит в подготовку к расчёту
+        (`protocad.prep`) и в соседние системы. Форма у движка — ему и
+        писать файл; через границу идёт только путь (§10.2).
+        """
+        raise NotImplementedError
+
     def section(self, request) -> SectionResult:
         """След детали на плоскости — рёбрами, а не сеткой.
 

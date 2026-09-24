@@ -259,6 +259,31 @@ def read_iges(path) -> list:
     return bodies_of(reader.OneShape(), Path(path).stem)
 
 
+# --- деталь ProtoCAD -----------------------------------------------------
+
+
+def from_document(document, folder=None) -> Study:
+    """Деталь из окна конструирования → исследование.
+
+    Форма живёт у движка детали (FreeCAD в отдельном процессе), поэтому она
+    выгружается ИМ в STEP — с именами тел — и читается здесь. Передавать
+    формы ядра между процессами нельзя (`docs/08_ENGINE_BACKEND.md`, §16.3),
+    и файл — это та самая граница, только видимая.
+    """
+    import tempfile
+
+    from .names import solver_name
+
+    folder = Path(folder) if folder else Path(tempfile.mkdtemp(prefix="protocad-prep-"))
+    folder.mkdir(parents=True, exist_ok=True)
+    title = getattr(document, "designation", "") or getattr(document, "name", "деталь")
+    path = folder / f"{solver_name(title)}.step"
+    result = document.export(path)
+    if not result.ok:
+        raise ImportError_(f"движок не выгрузил деталь: {result.message}")
+    return load(path, name=title)
+
+
 # --- контейнер ProtoCAD --------------------------------------------------
 
 

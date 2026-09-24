@@ -205,6 +205,22 @@ class FreeCADBackend:
         result.feature_id = ";".join(answer.get("bodies") or ())
         return result
 
+    def export(self, document_id: str, path, body_id: str = "") -> FeatureResult:
+        """Выгрузить деталь в STEP (с именами тел) или BREP. Путь абсолютный:
+        движок в другом процессе и о нашем текущем каталоге ничего не знает.
+
+        В ответе ``feature_id`` — имена выгруженных тел через «;».
+        """
+        ready, reason = self.available()
+        if not ready:
+            return error("BACKEND_UNAVAILABLE", reason, [], self.name)
+        answer = self._call({"command": "export", "document_id": document_id,
+                             "body_id": body_id,
+                             "path": str(Path(path).resolve())})
+        result = _result_of(answer)
+        result.feature_id = ";".join(answer.get("bodies") or ())
+        return result
+
     def scene(self, document_id: str, body_id: str = "") -> FeatureResult:
         """Деталь сеткой. Без имени тела — все тела документа."""
         return _result_of(self._call({"command": "scene",

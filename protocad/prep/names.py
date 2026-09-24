@@ -55,8 +55,20 @@ def solver_names(names) -> dict:
     Совпадения регистрозависимы не везде (CalculiX переводит имена в
     верхний регистр), поэтому сравниваются без учёта регистра.
     """
+    return keyed_solver_names([(name, name) for name in names])
+
+
+def keyed_solver_names(items) -> dict:
+    """То же для пар (ключ, имя): {ключ: для решателя}.
+
+    Ключ нужен, когда одно и то же имя носят разные вещи — тело «Опора» и
+    группа граней «Опора». По имени они получили бы одно имя в файле, и
+    набор элементов тела слился бы с набором граней.
+    """
     result, taken = {}, set()
-    for name in names:
+    for key, name in items:
+        if key in result:
+            continue
         base = solver_name(name)
         candidate, number = base, 2
         while candidate.upper() in taken:
@@ -64,5 +76,5 @@ def solver_names(names) -> dict:
             candidate = base[:LIMIT - len(suffix)] + suffix
             number += 1
         taken.add(candidate.upper())
-        result[name] = candidate
+        result[key] = candidate
     return result

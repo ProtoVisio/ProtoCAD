@@ -704,6 +704,9 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction("Открыть…", QtGui.QKeySequence.Open, self._open)
         file_menu.addAction("Сохранить как…", QtGui.QKeySequence.SaveAs, self._save_as)
         file_menu.addSeparator()
+        file_menu.addAction("Экспорт STEP…", self._export_step)
+        file_menu.addAction("Подготовка к расчёту…", self._to_prep)
+        file_menu.addSeparator()
         file_menu.addAction("Выход", QtGui.QKeySequence.Quit, self.close)
 
         edit_menu = self.menuBar().addMenu("Правка")
@@ -1806,6 +1809,42 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "ProtoCAD", str(error))
             return
         self.status.showMessage(f"Сохранено: {self.path.name}", 4000)
+
+    def _export_step(self) -> None:
+        """Выгрузить деталь для соседних систем. Пишет движок: форма у него."""
+        suggested = str(ROOT / "work" / f"{self.document.designation}.step")
+        name, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Экспорт", suggested, "STEP (*.step *.stp);;BREP (*.brep)")
+        if not name:
+            return
+        result = self.document.export(name)
+        if not result.ok:
+            QtWidgets.QMessageBox.critical(self, "ProtoCAD", result.message)
+            return
+        self.status.showMessage(f"Выгружено: {Path(name).name}", 4000)
+
+    def _to_prep(self) -> None:
+        """Передать деталь в подготовку к расчёту — отдельным окном.
+
+        Передаётся КОПИЯ формы, выгруженная движком: подготовка режет,
+        упрощает и склеивает, и делать это с самой деталью нельзя. Правки
+        детали в подготовку не едут сами — для этого есть рецепт.
+        """
+        from protocad.prep.io import from_document
+        from protocad_prep.window import PrepWindow
+
+        try:
+            study = from_document(self.document)
+        except Exception as failure:  # noqa: BLE001 — показать, а не уронить окно
+            QtWidgets.QMessageBox.critical(self, "ProtoCAD", str(failure))
+            return
+        folder = self.path.parent if self.path else ROOT / "work"
+        window = PrepWindow(study, folder=str(folder))
+        window.show()
+        # Окно живёт, пока на него есть ссылка: без неё сборщик мусора
+        # закрыл бы его сразу после открытия.
+        self._prep_windows = [item for item in getattr(self, "_prep_windows", [])
+                              if item.isVisible()] + [window]
 
     # --- модель ---
 

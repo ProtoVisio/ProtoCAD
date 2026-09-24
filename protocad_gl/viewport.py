@@ -70,6 +70,9 @@ uniform float dim;             // приглушение детали в реж�
 uniform vec3 sky;              // фон вверху
 uniform vec3 ground;           // фон внизу
 uniform float opacity;         // 1 — непрозрачно; меньше — предпросмотр
+// Цвета наборов граней. Номер набора N красится palette[N - 1]; первый —
+// прежний цвет «граней операции», поэтому окно детали выглядит как было.
+uniform vec3 palette[10];
 out vec4 frag_color;
 void main() {
     if (mode == 4) {
@@ -113,7 +116,7 @@ void main() {
     // Порядок — это старшинство: подсветка операции слабее наведения, а
     // наведение слабее выбора. Иначе выбранная грань пропадала бы под
     // цветом операции, которая её создала.
-    if (v_group != 0u)  base = vec3(0.98, 0.72, 0.38);
+    if (v_group != 0u)  base = palette[(v_group - 1u) % 10u];
     if (body_selected)  base = vec3(1.0, 0.72, 0.24);
     if (face_hover)     base = vec3(0.45, 0.78, 0.55);
     if (face_selected)  base = vec3(0.30, 0.62, 0.92);
@@ -131,6 +134,25 @@ void main() {
                             0.0, 1.0), clamp(opacity, 0.0, 1.0));
 }
 """
+
+
+#: Цвета наборов граней. Первый — прежний цвет «граней операции». Синий
+#: выбора и зелёный наведения сюда не входят: группа не должна выглядеть
+#: выбранной. Девятый — выбор нескольких граней, десятый — замечания.
+PALETTE = (
+    (0.98, 0.72, 0.38),   # оранжевый
+    (0.66, 0.50, 0.90),   # фиолетовый
+    (0.90, 0.42, 0.42),   # красный
+    (0.30, 0.74, 0.74),   # бирюзовый
+    (0.94, 0.86, 0.40),   # жёлтый
+    (0.95, 0.56, 0.76),   # розовый
+    (0.72, 0.54, 0.36),   # коричневый
+    (0.60, 0.72, 0.30),   # оливковый
+    (0.30, 0.62, 0.92),   # выбор
+    (0.96, 0.20, 0.20),   # замечание
+)
+SELECTION_COLOUR = 9
+PROBLEM_COLOUR = 10
 
 
 @dataclass
@@ -405,6 +427,10 @@ class Viewport(QOpenGLWidget):
         self.highlight_face = 0
         self.hover_face = 0
         self.face_group: set[int] = set()
+        #: Цвет по грани: {номер грани в сцене: номер цвета 1..10}. Так
+        #: подготовка к расчёту красит группы — у каждой свой цвет.
+        self.face_colors: dict = {}
+        self.palette = list(PALETTE)
         self.edge_selection: set[int] = set()
         # Что считается «верхом» экрана. По умолчанию мировая Z, но при
         # взгляде почти вертикально вниз она почти совпадает с направлением
@@ -479,6 +505,7 @@ class Viewport(QOpenGLWidget):
         self.highlight_face = 0
         self.hover_face = 0
         self.face_group = set()
+        self.face_colors = {}
         self.edge_selection = set()
         if not keep_view:
             self._pan[:] = 0.0
@@ -560,12 +587,28 @@ class Viewport(QOpenGLWidget):
         self._dirty = False
 
     def _group_flags(self) -> np.ndarray:
-        """Признак «вершина принадлежит выбранной операции» для каждой вершины."""
+        """Номер цвета набора для каждой вершины; ноль — своего цвета нет.
+
+        Грани выбранной операции (``face_group``) — первый цвет и старше
+        раскраски групп: подсветка того, что человек выбрал сейчас, не
+        должна тонуть в цвете группы.
+        """
         count = len(self.scene.positions)
-        if not self.face_group or len(self.scene.face_ids) != count:
+        if len(self.scene.face_ids) != count or not (self.face_group or self.face_colors):
             return np.zeros(count, np.uint32)
-        wanted = np.fromiter(self.face_group, np.uint32, len(self.face_group))
-        return np.isin(self.scene.face_ids, wanted).astype(np.uint32)
+        flags = np.zeros(count, np.uint32)
+        if self.face_colors:
+            top = int(max(int(self.scene.face_ids.max(initial=0)),
+                          max(self.face_colors)))
+            lookup = np.zeros(top + 1, np.uint32)
+            for face, colour in self.face_colors.items():
+                if 0 <= int(face) <= top:
+                    lookup[int(face)] = int(colour)
+            flags = lookup[self.scene.face_ids]
+        if self.face_group:
+            wanted = np.fromiter(self.face_group, np.uint32, len(self.face_group))
+            flags[np.isin(self.scene.face_ids, wanted)] = 1
+        return flags
 
     def _edge_flags(self) -> np.ndarray:
         count = len(self.scene.edge_positions)
@@ -604,6 +647,16 @@ class Viewport(QOpenGLWidget):
         if group == self.face_group:
             return
         self.face_group = group
+        self._dirty = True
+        self.update()
+
+    def set_face_colors(self, colours) -> None:
+        """Раскрасить грани: {номер грани в сцене: номер цвета 1..10}."""
+        colours = {int(face): int(value) for face, value in (colours or {}).items()
+                   if int(value) > 0}
+        if colours == self.face_colors:
+            return
+        self.face_colors = colours
         self._dirty = True
         self.update()
 
@@ -831,6 +884,9 @@ class Viewport(QOpenGLWidget):
         GL.glUniform3f(
             GL.glGetUniformLocation(self._program, "base_color"), *self.base_color
         )
+        GL.glUniform3fv(GL.glGetUniformLocation(self._program, "palette"),
+                        len(self.palette),
+                        np.asarray(self.palette, np.float32).reshape(-1))
         GL.glUniform1i(GL.glGetUniformLocation(self._program, "mode"), mode)
 
         if self._face_vao:
