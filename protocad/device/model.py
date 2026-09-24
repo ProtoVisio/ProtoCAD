@@ -109,6 +109,8 @@ class Device:
         #: Узлы, которые человек велел считать одной единицей / разобрать.
         self.whole: set = set()
         self.split: set = set()
+        #: Выбранные слои в контактах: {ключ пары: {"interface", "thickness"}}.
+        self.interfaces: dict = {}
         self.source = ""
         self.path: Path | None = None
         self._facts: dict = {}
@@ -399,6 +401,7 @@ class Device:
                        for board in self.boards.values()],
             "cases": [{"name": case.name, "note": case.note} for case in self.cases],
             "whole": sorted(self.whole), "split": sorted(self.split),
+            "interfaces": self.interfaces,
             "units": {key: {"role": unit.role, "kind": unit.kind, "board": unit.board,
                             "cases": sorted(unit.cases), "material": unit.material,
                             "reason": unit.reason}
@@ -417,6 +420,7 @@ class Device:
                       for item in data.get("cases") or ()]
         self.whole = set(data.get("whole") or ())
         self.split = set(data.get("split") or ())
+        self.interfaces = dict(data.get("interfaces") or {})
         self.build_units()
         for key, saved in (data.get("units") or {}).items():
             unit = self.units.get(key)
