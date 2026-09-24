@@ -27,6 +27,9 @@ from ..model import KIND_ASSEMBLY, KIND_DETAIL, KIND_STANDARD, Assembly, Item
 BOARD_ORIGIN = (10.0, 10.0, 11.0)
 BOARD_SIZE = (160.0, 100.0, 1.6)
 MOUNTING = ((5.0, 5.0), (155.0, 5.0), (5.0, 95.0), (155.0, 95.0))
+#: Угловые колонны основания под винты крышки (середины, мм). Колонна
+#: 6×6 не доходит до платы на миллиметр.
+COLUMNS = ((6.0, 6.0), (174.0, 6.0), (6.0, 114.0), (174.0, 114.0))
 
 
 def _place(x=0.0, y=0.0, z=0.0, turn=0.0) -> np.ndarray:
@@ -173,13 +176,13 @@ def device(problems: bool = False, extra: int = 0) -> Assembly:
     root = Assembly("АБВГ.468332.001", "Блок управления", kind=KIND_ASSEMBLY)
 
     base = kernel.cut(kernel.box(180, 120, 40), kernel.box(174, 114, 37, origin=(3, 3, 3)))
-    for x, y in ((3, 3), (169, 3), (3, 109), (169, 109)):
-        column = kernel.box(8, 8, 37, origin=(x, y, 3))
-        column = kernel.cut(column, kernel.cylinder(1.25, 10, origin=(x + 4, y + 4, 30)))
+    for x, y in COLUMNS:
+        column = kernel.box(6, 6, 37, origin=(x - 3, y - 3, 3))
+        column = kernel.cut(column, kernel.cylinder(1.25, 10, origin=(x, y, 30)))
         base = kernel.fuse(base, column)
     root.place(_part("Основание", base, designation="АБВГ.735311.001"), "Основание")
     cover = kernel.box(180, 120, 3, origin=(0, 0, 40))
-    for x, y in ((7, 7), (173, 7), (7, 113), (173, 113)):
+    for x, y in COLUMNS:
         cover = kernel.cut(cover, kernel.cylinder(1.7, 3, origin=(x, y, 40)))
     root.place(_part("Крышка", cover, designation="АБВГ.741124.001"), "Крышка")
 
@@ -195,7 +198,7 @@ def device(problems: bool = False, extra: int = 0) -> Assembly:
         root.place(washer, f"Шайба:{number}", _place(at_x, at_y, top))
         root.place(screw, f"Винт платы:{number}", _place(at_x, at_y, top + 0.5))
     cover_screw = _part("Винт А.М3-6gx10.58.016 ГОСТ 17473-80", _screw(10.0), KIND_STANDARD)
-    for number, (x, y) in enumerate(((7, 7), (173, 7), (7, 113), (173, 113)), 1):
+    for number, (x, y) in enumerate(COLUMNS, 1):
         root.place(cover_screw, f"Винт крышки:{number}", _place(x, y, 43.0))
 
     label = _part("Шильдик", kernel.box(40, 20, 0.5), designation="АБВГ.754312.001")
