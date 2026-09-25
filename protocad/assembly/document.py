@@ -193,7 +193,7 @@ class AssemblyDocument:
     # --- сопряжения ------------------------------------------------------------
 
     def mate(self, kind: str, first, second, value_mm: float = 0.0,
-             flip: bool = False) -> Mate:
+             flip: bool = False, angle_deg: float = 0.0) -> Mate:
         """Добавить сопряжение. ``first``/``second`` — пары (вхождение,
         описание грани в его координатах), как их отдаёт `pick`."""
         first_occurrence, first_face = first
@@ -203,7 +203,8 @@ class AssemblyDocument:
                                     faces_module.mark_of(first_face)),
                     second=Reference(second_occurrence.stable_id,
                                      faces_module.mark_of(second_face)),
-                    value_mm=float(value_mm), flip=bool(flip))
+                    value_mm=float(value_mm), angle_deg=float(angle_deg),
+                    flip=bool(flip))
         self.mates.append(mate)
         return mate
 
@@ -219,13 +220,25 @@ class AssemblyDocument:
         text = f"{TITLES.get(mate.kind, mate.kind)}: {names[0]} — {names[1]}"
         if mate.kind == "distance":
             text += f", {mate.value_mm:g} мм"
+        if mate.kind == "angle":
+            text += f", {mate.angle_deg:g}°"
         if mate.flip:
             text += ", развёрнуто"
         return text
 
-    def solve(self) -> list:
+    def solve(self, drag=None) -> list:
         """Расставить вхождения по сопряжениям. Замечания — и в итог, и в
-        ``diagnostics``: окно показывает их, не вызывая решение повторно."""
+        ``diagnostics``: окно показывает их, не вызывая решение повторно.
+
+        ``drag`` — ``(вхождение, точка в его координатах, точка сборки)``:
+        перетаскивание мышью. Деталь идёт за указателем, насколько
+        позволяют её сопряжения, прикреплённое к ней — следом.
+        """
+        if drag is not None:
+            occurrence, grab, point = drag
+            drag = (occurrence.stable_id,
+                    tuple(float(value) for value in grab),
+                    tuple(float(value) for value in point))
         by_id = {}
         instances = []
         # Грани нужны только тем, на кого ссылаются сопряжения: разбирать
@@ -245,7 +258,7 @@ class AssemblyDocument:
                        else []))
             instances.append(instance)
             by_id[instance.id] = occurrence
-        found = solve(MateSet(self.root.name, instances, self.mates))
+        found = solve(MateSet(self.root.name, instances, self.mates), drag)
         for instance in instances:
             if instance.fixed:
                 self.fixed.add(instance.id)

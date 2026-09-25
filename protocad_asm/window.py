@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from protocad.assembly import TITLES, AssemblyDocument
 from protocad.assembly import faces as faces_module
 from protocad.assembly.document import BROKEN, FIXED, FREE, MATED
+# Какие грани берёт сопряжение — ровно то, что проверяет решатель: второй
+# список здесь разошёлся бы с ним на первом же новом сопряжении.
+from protocad.assembly.solve import SURFACES as WANTS
 from protocad_gl import SceneBuffers, Viewport
 from protocad_gl.viewport import PROBLEM_COLOUR, SELECTION_COLOUR
 
@@ -33,11 +37,27 @@ INSERT_FILTER = ("Детали и сборки (*.step *.stp *.iges *.igs *.brep
                  "*.prcadPart *.prcadAsm);;Все файлы (*)")
 ASSEMBLY_FILTER = "Сборка ProtoCAD (*.prcadAsm)"
 
-#: Какая грань нужна сопряжению.
-WANTS = {"coincident": "plane", "distance": "plane", "concentric": "cylinder"}
 SURFACE = {"plane": "плоская", "cylinder": "цилиндрическая"}
 #: То же в винительном падеже — для подсказки «щёлкните …».
 SURFACE_TO_PICK = {"plane": "плоскую", "cylinder": "цилиндрическую"}
+#: Подсказки команд сопряжений на панели инструментов.
+MATE_TIPS = {
+    "coincident": "две плоские грани — в одну плоскость",
+    "concentric": "две цилиндрические грани — на одну ось",
+    "distance": "две плоские грани — на расстоянии",
+    "angle": "плоскости или оси — под углом друг к другу",
+    "parallel": "плоскости или оси — параллельно",
+    "perpendicular": "плоскости или оси — под прямым углом",
+    "tangent": "цилиндр к плоскости или два цилиндра — вплотную",
+}
+#: Клавиши команд сопряжений.
+MATE_KEYS = {"coincident": "C", "concentric": "O", "distance": "D",
+             "angle": "A", "parallel": "P", "perpendicular": "R",
+             "tangent": "T"}
+#: У каких сопряжений «Развернуть» что-то значит. У перпендикулярности
+#: сторон нет: развернуть её — то же самое.
+FLIPPABLE = ("coincident", "distance", "concentric", "angle", "parallel",
+             "tangent")
 
 #: Цвета первой и второй грани сопряжения — разные: видно, что с чем.
 FIRST_COLOUR = 1
@@ -72,6 +92,9 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         self.viewport = Viewport()
         self.viewport.pick_kinds = ("face",)
         self.viewport.selected.connect(self._picked)
+        #: Перетаскивание детали левой кнопкой: что тянут и за какую точку.
+        self._drag: dict | None = None
+        self.viewport.controller = _DragPart(self)
 
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Сборка", "Состояние"])
@@ -82,7 +105,10 @@ class AssemblyWindow(QtWidgets.QMainWindow):
 
         self.output = QtWidgets.QPlainTextEdit()
         self.output.setReadOnly(True)
-        self.output.setPlaceholderText("Здесь — итог последней команды.")
+        self.output.setPlaceholderText(
+            "Здесь — итог последней команды.\n\nДеталь тащат левой кнопкой: "
+            "она идёт за мышью, насколько позволяют сопряжения. Вид вращают "
+            "средней кнопкой или левой по пустому месту.")
 
         # Панель сопряжения — над деревом, вне разделителя: в разделителе
         # скрытая панель при показе получала нулевую высоту и оставалась
@@ -157,12 +183,9 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         action("Переместить…", self._move, "сдвиг и поворот вхождения",
                needs=self.needs_choice)
         bar.addSeparator()
-        for kind, key in (("coincident", "C"), ("concentric", "O"), ("distance", "D")):
+        for kind, key in MATE_KEYS.items():
             action(TITLES[kind], lambda _checked=False, kind=kind: self.start_mate(kind),
-                   {"coincident": "две плоские грани — в одну плоскость",
-                    "concentric": "две цилиндрические грани — на одну ось",
-                    "distance": "две плоские грани — на расстоянии"}[kind],
-                   key, needs=self.needs_parts)
+                   MATE_TIPS[kind], key, needs=self.needs_parts)
         bar.addSeparator()
         action("Пересчитать", self._solve, "расставить вхождения по сопряжениям",
                "F5", needs=self.needs_parts)
@@ -483,16 +506,34 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         self.mate = {"kind": kind, "picks": [], "added": None,
                      "before": self.document.snapshot()}
         self.current_mate = ""
-        surface = SURFACE_TO_PICK[WANTS[kind]]
         self.panel.setTitle(TITLES[kind])
-        self.mate_hint.setText(f"Щёлкните {surface} грань одной детали, потом "
-                               f"{surface} грань другой. Деталь встанет сразу.")
-        distance = kind == "distance"
-        self.mate_value.setVisible(distance)
-        self.mate_value_row.setVisible(distance)
+        wanted = WANTS[kind]
+        if len(wanted) == 1:
+            surface = SURFACE_TO_PICK[wanted[0]]
+            which = f"Щёлкните {surface} грань одной детали, потом {surface} грань другой."
+        else:
+            which = ("Щёлкните грань одной детали, потом грань другой — плоскую "
+                     "или цилиндрическую.")
+            if kind == "tangent":
+                which += " Хотя бы одна — цилиндрическая."
+        self.mate_hint.setText(f"{which} Деталь встанет сразу.")
+        # Число на панели — расстояние у «Расстояния» и градусы у «Угла».
+        numeric = kind in ("distance", "angle")
+        self.mate_value.setVisible(numeric)
+        self.mate_value_row.setVisible(numeric)
         self.mate_value.blockSignals(True)
-        self.mate_value.setValue(0.0)
+        if kind == "angle":
+            self.mate_value_row.setText("Угол")
+            self.mate_value.setRange(0.0, 180.0)
+            self.mate_value.setSuffix(" °")
+            self.mate_value.setValue(90.0)
+        else:
+            self.mate_value_row.setText("Расстояние")
+            self.mate_value.setRange(-1e5, 1e5)
+            self.mate_value.setSuffix(" мм")
+            self.mate_value.setValue(0.0)
         self.mate_value.blockSignals(False)
+        self.mate_flip.setVisible(kind in FLIPPABLE)
         self.mate_flip.blockSignals(True)
         self.mate_flip.setChecked(False)
         self.mate_flip.blockSignals(False)
@@ -507,11 +548,18 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         occurrence, face = picked
         wanted = WANTS[self.mate["kind"]]
         mark = faces_module.mark_of(face)
-        if faces_module.kind_of(mark) != wanted:
-            self.mate_state.setText(f"Нужна {SURFACE[wanted]} грань, а выбрана "
+        if faces_module.kind_of(mark) not in wanted:
+            need = " или ".join(SURFACE[item] for item in wanted)
+            self.mate_state.setText(f"Нужна {need} грань, а выбрана "
                                     f"{_surface_name(face)}. Выберите другую.")
             return
         picks = self.mate["picks"]
+        if (self.mate["kind"] == "tangent" and len(picks) == 1
+                and faces_module.kind_of(mark) == "plane"
+                and faces_module.kind_of(faces_module.mark_of(picks[0][1])) == "plane"):
+            self.mate_state.setText("Две плоскости не касаются, а совпадают: "
+                                    "для касания нужна цилиндрическая грань.")
+            return
         if len(picks) == 2:
             # Третий щелчок — начать выбор заново с этой грани.
             self.document.restore(self.mate["before"])
@@ -536,9 +584,12 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         """Поставить сопряжение и решить — на пробу, до «Применить»."""
         (first, first_face, _), (second, second_face, _) = self.mate["picks"]
         self.document.restore(self.mate["before"])
+        angle = self.mate["kind"] == "angle"
         self.mate["added"] = self.document.mate(
             self.mate["kind"], (first, first_face), (second, second_face),
-            self.mate_value.value(), self.mate_flip.isChecked())
+            0.0 if angle else self.mate_value.value(),
+            self.mate_flip.isChecked(),
+            angle_deg=self.mate_value.value() if angle else 0.0)
         with self._busy():
             found = self.document.solve()
         self._refresh()
@@ -761,6 +812,141 @@ class AssemblyWindow(QtWidgets.QMainWindow):
             node.setData(0, QtCore.Qt.UserRole, ("path", inner))
             self._fill_inner(node, occurrence.item, inner)
 
+    # --- перетаскивание -------------------------------------------------------
+
+    #: Сколько пикселей мышь должна пройти, чтобы нажатие стало протяжкой, —
+    #: столько же, сколько у вида: щелчок и протяжка различаются одинаково.
+    DRAG_THRESHOLD = 4.0
+    #: Не чаще, чем раз в столько секунд, пересчитывать сборку при протяжке:
+    #: мышь присылает движения чаще, чем их имеет смысл показывать.
+    DRAG_INTERVAL = 0.02
+
+    def _drag_press(self, event) -> bool:
+        """Нажатие левой кнопки: запомнить деталь под мышью и точку на ней.
+
+        Нажатие НЕ забирается у вида: без протяжки это щелчок, и выбор
+        остаётся прежним.
+        """
+        self._drag = None
+        if (event.button() != QtCore.Qt.LeftButton or self.mate is not None
+                or event.modifiers() != QtCore.Qt.NoModifier
+                or self.preview is None):
+            return False
+        position = event.position()
+        face_id = self.viewport.pick_face(position)
+        entry = self.preview.face_to_object.get(int(face_id)) if face_id else None
+        body = self.preview.id_to_object.get(entry["body"]) if entry else None
+        if not body or not body.get("path"):
+            return False
+        occurrence = self.document.occurrence(body["path"][0])
+        if occurrence is None:
+            return False
+        if occurrence.stable_id in self.document.fixed:
+            self.statusBar().showMessage(
+                f"«{occurrence.label}» закреплена — её не тянут; освободите, "
+                f"чтобы двигать", 5000)
+            return False
+        point = self._surface_point(position, int(face_id))
+        if point is None:
+            return False
+        rotation, shift = occurrence.transform[:3, :3], occurrence.transform[:3, 3]
+        self._drag = {
+            "start": position, "occurrence": occurrence,
+            "grab": rotation.T @ (point - shift), "point": point,
+            # Мышь ведёт точку по плоскости экрана, проходящей через место
+            # захвата: дальше и ближе мышью не сдвинуть — это делают
+            # сопряжения или вращение вида.
+            "normal": np.asarray(self.viewport.orbit.toward, float),
+            "moving": False, "before": None, "last": 0.0, "pending": None,
+        }
+        return False
+
+    def _drag_move(self, event) -> bool:
+        drag = self._drag
+        if drag is None:
+            return False
+        if not event.buttons() & QtCore.Qt.LeftButton:
+            self._drag = None
+            return False
+        if not drag["moving"]:
+            moved = event.position() - drag["start"]
+            if abs(moved.x()) + abs(moved.y()) <= self.DRAG_THRESHOLD:
+                return True
+            drag["moving"] = True
+            drag["before"] = self.document.snapshot()
+        point = self._screen_point(event.position(), drag)
+        if point is None:
+            return True
+        drag["pending"] = point
+        if time.monotonic() - drag["last"] >= self.DRAG_INTERVAL:
+            self._drag_to(point)
+        return True
+
+    def _drag_to(self, point) -> None:
+        drag = self._drag
+        drag["last"] = time.monotonic()
+        drag["pending"] = None
+        self.document.solve(drag=(drag["occurrence"], drag["grab"], point))
+        # Показ — только сцена и раскраска: дерево и замечания обновятся на
+        # отпускании, пересобирать их на каждое движение мыши незачем.
+        self.preview = self.document.scene()
+        self.viewport.set_scene(SceneBuffers.from_preview(self.preview))
+        self._paint()
+
+    def _drag_release(self, event) -> bool:
+        drag = self._drag
+        if drag is None or event.button() != QtCore.Qt.LeftButton:
+            return False
+        if not drag["moving"]:
+            self._drag = None
+            return False                    # щелчок — выбор, как и был
+        if drag["pending"] is not None:
+            self._drag_to(drag["pending"])
+        self._drag = None
+        self._done(drag["before"])
+        self._refresh()
+        occurrence = drag["occurrence"]
+        held = self.document.mates_of(occurrence)
+        text = (f"Перемещено: {occurrence.label}"
+                + (" — в пределах сопряжений" if held else ""))
+        blocking = [note for note in self.document.diagnostics if note.blocking]
+        if blocking:
+            text += "\n" + "\n".join(f"✖ {note.message}" for note in blocking)
+        self._say(text)
+        return True
+
+    def _screen_point(self, position, drag):
+        """Точка под мышью на плоскости экрана через место захвата."""
+        origin, direction = self.viewport.ray(position)
+        normal = drag["normal"]
+        facing = float(normal @ direction)
+        if abs(facing) < 1e-9:
+            return None
+        reach = float(normal @ (drag["point"] - origin)) / facing
+        return np.asarray(origin, float) + reach * np.asarray(direction, float)
+
+    def _surface_point(self, position, face_id: int):
+        """Точка грани под мышью — пересечением луча с её треугольниками.
+
+        Не удалось (луч прошёл по кромке) — середина грани: тянуть за неё
+        тоже можно, просто точка захвата не под самой мышью.
+        """
+        origin, direction = self.viewport.ray(position)
+        mine = self.preview.face_ids == face_id
+        if mine.any():
+            triangles = self.preview.positions.reshape(-1, 3, 3)
+            chosen = triangles[mine.reshape(-1, 3)[:, 0]].astype(float)
+            reach = _ray_hits(np.asarray(origin, float),
+                              np.asarray(direction, float), chosen)
+            if reach is not None:
+                return np.asarray(origin, float) + reach * np.asarray(direction, float)
+        picked = self.document.pick(self.preview, face_id)
+        if picked is None:
+            return None
+        occurrence, face = picked
+        centre = np.asarray(face.get("center") or face.get("origin") or (0, 0, 0), float)
+        return occurrence.transform[:3, :3] @ centre + occurrence.transform[:3, 3]
+
     # --- выбор ------------------------------------------------------------------
 
     def _picked(self, what: dict) -> None:
@@ -826,10 +1012,13 @@ class AssemblyWindow(QtWidgets.QMainWindow):
             menu.addSeparator()
             menu.addAction("Удалить из сборки", self._delete)
         elif kind == "mate" and key:
-            menu.addAction("Развернуть", lambda: self._flip_mate(key))
             mate = next((entry for entry in self.document.mates if entry.id == key), None)
+            if mate is not None and mate.kind in FLIPPABLE:
+                menu.addAction("Развернуть", lambda: self._flip_mate(key))
             if mate is not None and mate.kind == "distance":
                 menu.addAction("Расстояние…", lambda: self._set_distance(key))
+            if mate is not None and mate.kind == "angle":
+                menu.addAction("Угол…", lambda: self._set_angle(key))
             menu.addSeparator()
             menu.addAction("Удалить сопряжение", self._delete)
         menu.exec(self.tree.viewport().mapToGlobal(position))
@@ -853,6 +1042,62 @@ class AssemblyWindow(QtWidgets.QMainWindow):
         before = self.document.snapshot()
         mate.value_mm = float(value)
         self._solve_after(before)
+
+    def _set_angle(self, key: str) -> None:
+        mate = next((entry for entry in self.document.mates if entry.id == key), None)
+        if mate is None:
+            return
+        value, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Угол", "Угол, градусы", mate.angle_deg, 0.0, 180.0, 3)
+        if not ok:
+            return
+        before = self.document.snapshot()
+        mate.angle_deg = float(value)
+        self._solve_after(before)
+
+
+class _DragPart:
+    """Контроллер вида: левая кнопка на незакреплённой детали тащит её.
+
+    Сам ничего не решает — передаёт события окну. Нажатие отдаёт виду
+    дальше (без протяжки это щелчок-выбор), движения во время протяжки
+    забирает себе: вид при этом не вращается.
+    """
+
+    def __init__(self, window: AssemblyWindow):
+        self.window = window
+
+    def handle(self, kind: str, event) -> bool:
+        if kind == "press":
+            return self.window._drag_press(event)
+        if kind == "move":
+            return self.window._drag_move(event)
+        if kind == "release":
+            return self.window._drag_release(event)
+        return False
+
+
+def _ray_hits(origin, direction, triangles):
+    """Ближайшее пересечение луча с треугольниками (Мёллер — Трумбор).
+
+    ``None`` — не попал ни в один.
+    """
+    first, second, third = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    edge1, edge2 = second - first, third - first
+    across = np.cross(direction, edge2)
+    det = np.einsum("ij,ij->i", edge1, across)
+    usable = np.abs(det) > 1e-12
+    inverse = np.where(usable, 1.0 / np.where(usable, det, 1.0), 0.0)
+    offset = origin - first
+    u = np.einsum("ij,ij->i", offset, across) * inverse
+    q = np.cross(offset, edge1)
+    v = (q @ direction) * inverse
+    reach = np.einsum("ij,ij->i", edge2, q) * inverse
+    inside = (usable & (u >= -1e-7) & (v >= -1e-7) & (u + v <= 1.0 + 1e-7)
+              & (reach > 0.0))
+    if not inside.any():
+        return None
+    return float(reach[inside].min())
 
 
 def _surface_name(face: dict) -> str:

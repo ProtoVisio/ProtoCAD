@@ -21,12 +21,15 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-#: Виды сопряжений. Первая очередь — эти четыре.
-MATES = ("fixed", "coincident", "concentric", "distance")
+#: Виды сопряжений.
+MATES = ("fixed", "coincident", "concentric", "distance",
+         "angle", "parallel", "perpendicular", "tangent")
 
 #: Названия для человека.
 TITLES = {"fixed": "Закрепление", "coincident": "Совпадение",
-          "concentric": "Соосность", "distance": "Расстояние"}
+          "concentric": "Соосность", "distance": "Расстояние",
+          "angle": "Угол", "parallel": "Параллельность",
+          "perpendicular": "Перпендикулярность", "tangent": "Касание"}
 
 
 def new_id() -> str:
@@ -88,6 +91,8 @@ class Mate:
     second: Reference = field(default_factory=Reference)
     #: Для «Расстояния» — сколько; для остальных не используется.
     value_mm: float = 0.0
+    #: Для «Угла» — сколько градусов между гранями (осями).
+    angle_deg: float = 0.0
     #: Развернуть: у совпадения граней есть две стороны, и выбирает их
     #: человек. Без этого поля деталь садилась бы то так, то наоборот в
     #: зависимости от того, куда смотрит нормаль, — а это не его дело.
@@ -100,7 +105,8 @@ class Mate:
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind,
                 "first": self.first.to_dict(), "second": self.second.to_dict(),
-                "value_mm": self.value_mm, "flip": self.flip}
+                "value_mm": self.value_mm, "angle_deg": self.angle_deg,
+                "flip": self.flip}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Mate":
@@ -109,6 +115,7 @@ class Mate:
                    first=Reference.from_dict(data.get("first") or {}),
                    second=Reference.from_dict(data.get("second") or {}),
                    value_mm=float(data.get("value_mm", 0.0)),
+                   angle_deg=float(data.get("angle_deg", 0.0)),
                    flip=bool(data.get("flip")))
 
 

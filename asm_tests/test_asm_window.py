@@ -144,3 +144,82 @@ def test_wrong_face_is_refused_with_reason(application, tmp_path):
     assert window.mate is None and not window.panel.isVisible()
     window.changed = False
     window.close()
+
+
+def _mouse(view, kind, point, buttons):
+    """Событие мыши С НАЖАТОЙ КНОПКОЙ: `QTest.mouseMove` кнопку не передаёт,
+    а протяжка без неё — это просто движение над деталью."""
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+    types = {"press": QtCore.QEvent.MouseButtonPress,
+             "move": QtCore.QEvent.MouseMove,
+             "release": QtCore.QEvent.MouseButtonRelease}
+    button = QtCore.Qt.NoButton if kind == "move" else QtCore.Qt.LeftButton
+    local = QtCore.QPointF(point)
+    event = QtGui.QMouseEvent(types[kind], local, view.mapToGlobal(local), button,
+                              buttons, QtCore.Qt.NoModifier)
+    QtWidgets.QApplication.sendEvent(view, event)
+
+
+def test_drag_part_with_mouse_keeps_mates(application, tmp_path):
+    from PySide6 import QtCore
+
+    from asm_helpers import face, part, place_of
+    from protocad import kernel
+    from protocad_asm.window import AssemblyWindow
+
+    window = AssemblyWindow(folder=str(tmp_path))
+    document = window.document
+    host = document.add(part("Основание", kernel.box(80, 60, 10)), "Основание")
+    guest = document.add(part("Брусок", kernel.box(10, 10, 10)), "Брусок")
+    document.mate("coincident", face(document, host, "plane", normal=(0, 0, 1)),
+                  face(document, guest, "plane", normal=(0, 0, -1)))
+    assert document.solve() == []
+    window.resize(1300, 850)
+    window._refresh(fit=True)
+    window.show()
+    _wait(application, 0.4)
+    view = window.viewport
+    start = _spot(window, guest, lambda item: item["surface"] == "plane"
+                  and item["normal"][2] > 0.99)
+    assert start is not None, "верх бруска не виден"
+    before = place_of(guest).copy()
+
+    held = QtCore.Qt.LeftButton
+    _mouse(view, "press", start, held)
+    for step in range(1, 11):
+        _mouse(view, "move", start + QtCore.QPoint(8 * step, 3 * step), held)
+        _wait(application, 0.03)
+    _mouse(view, "release", start + QtCore.QPoint(80, 30), QtCore.Qt.NoButton)
+    _wait(application, 0.2)
+
+    after = place_of(guest)
+    # Уехал по плоскости основания и остался на ней: совпадение держит.
+    assert np.linalg.norm(after[:2] - before[:2]) > 5.0
+    assert abs(after[2] - 10.0) < 1e-6
+    assert document.diagnostics == [] and all(mate.ok for mate in document.mates)
+    assert "Перемещено: Брусок" in window.output.toPlainText()
+
+    # Щелчок без протяжки по-прежнему выбирает.
+    spot = _spot(window, guest, lambda item: item["surface"] == "plane"
+                 and item["normal"][2] > 0.99)
+    _mouse(view, "press", spot, held)
+    _mouse(view, "release", spot, QtCore.Qt.NoButton)
+    _wait(application, 0.1)
+    assert window._chosen() is guest
+
+    # Закреплённое не тянется: протяжка по нему вращает вид.
+    yaw = view.yaw
+    spot = _spot(window, host, lambda item: item["surface"] == "plane"
+                 and item["normal"][2] > 0.99)
+    _mouse(view, "press", spot, held)
+    for step in range(1, 6):
+        _mouse(view, "move", spot + QtCore.QPoint(10 * step, 0), held)
+    _mouse(view, "release", spot + QtCore.QPoint(50, 0), QtCore.Qt.NoButton)
+    _wait(application, 0.1)
+    assert np.allclose(place_of(host), (0, 0, 0)) and abs(view.yaw - yaw) > 1.0
+
+    window._undo()                               # протяжку можно отменить
+    assert np.allclose(place_of(guest), before, atol=1e-9)
+    window.changed = False
+    window.close()
